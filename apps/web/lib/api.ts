@@ -21,12 +21,15 @@ export type AssessmentResponse = {
   };
 };
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+const ASSESSMENTS_ENDPOINT = API_BASE_URL
+  ? `${API_BASE_URL}/assessments`
+  : "/api/assessments";
 
 export async function createAssessment(
   profile: TherapyProfile,
 ): Promise<AssessmentResponse> {
-  const response = await fetch(`${API_BASE_URL}/assessments`, {
+  const response = await fetch(ASSESSMENTS_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

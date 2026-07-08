@@ -32,6 +32,8 @@ npm install
 npm run dev
 ```
 
+The web app includes a local preview API route, so the form works even when the FastAPI service is not running.
+
 Backend:
 
 ```bash
@@ -44,4 +46,4 @@ uvicorn app.main:app --reload
 
 Use Python 3.12 or another runtime with compatible FastAPI/Pydantic wheels.
 
-The frontend expects the API at `http://localhost:8000` unless configured otherwise.
+For full-stack mode, run the frontend with `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`.
