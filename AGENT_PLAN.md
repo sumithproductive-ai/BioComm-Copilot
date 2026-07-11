@@ -1,7 +1,9 @@
 # Agent Build Plan: BioComm Copilot
 
-**Companion to PRODUCT_BRIEF.md, PRD.md, PERSONAS.md, USER_STORIES.md**
+**Companion to PRODUCT_BRIEF.md, PRD.md, PERSONAS.md, USER_STORIES.md, ERD.md**
 *Purpose: translate the product spec into a concrete, buildable multi-agent system. This is the plan an engineer starts building from.*
+
+*Stack note: this document originally specified a FastAPI (Python) backend — Pydantic models, `asyncio.gather` dispatch — behind a Next.js frontend. The project migrated to a single full-stack TypeScript application (see ERD.md's "Scope decisions" and issue #1): agents run as Next.js Server Actions/Route Handlers, Pydantic → Zod, `asyncio.gather` → `Promise.allSettled`. The agent roster, execution model, schemas, and guardrails below are otherwise unchanged — only the implementation language changed.*
 
 ---
 
@@ -92,7 +94,7 @@ Each spec below is what one engineer needs to start implementing that agent's sy
 
 **Output:** Not a memo section — a run manifest: `{ session_id, agent_statuses: {agent_name: "complete"|"incomplete"|"failed"}, elapsed_ms, research_outputs[], critic_output, memo }`.
 
-**Failure mode to guard against:** don't let one slow research agent (e.g., Deal Comparables searching SEC EDGAR) block the others — dispatch must be truly concurrent (`asyncio.gather` with `return_exceptions=True` or equivalent), not a loop that awaits sequentially.
+**Failure mode to guard against:** don't let one slow research agent (e.g., Deal Comparables searching SEC EDGAR) block the others — dispatch must be truly concurrent (`Promise.allSettled` or equivalent), not a loop that awaits sequentially.
 
 ---
 
@@ -240,7 +242,7 @@ Each spec below is what one engineer needs to start implementing that agent's sy
 - Stamp as-of dates on every section.
 - Render Reviewer Notes verbatim from Critic output — no rewriting.
 
-**Output:** the full memo object consumed directly by the Next.js frontend (Story 11) — this is the contract boundary between backend and frontend, so its schema should be finalized before UI work starts (matches PRD.md Week 6/7 dependency note).
+**Output:** the full memo object consumed directly by the memo page UI (Story 11) — this is the contract boundary between the agent layer and the UI, so its schema should be finalized before UI work starts (matches PRD.md Week 6/7 dependency note).
 
 ---
 
@@ -266,8 +268,8 @@ Since Clinical Research and Competitive Intelligence both hit ClinicalTrials.gov
 
 ## 6. Shared infrastructure to build before any agent logic
 
-1. **Typed schema contracts** for all 5 research agent outputs + Critic + Synthesis (Pydantic models on the FastAPI side) — must be finalized before Critic Agent is built, since Critic reasons over these structures directly (PRD.md dependency note, Week 6).
-2. **Langfuse wiring** — session_id generated at Orchestrator, passed to every child agent call and every tool call as a nested span. Build this in Week 1–2 alongside the FastAPI/Next.js skeleton, not bolted on later — retrofitting tracing is much more painful than building it in from the first agent call.
+1. **Typed schema contracts** for all 5 research agent outputs + Critic + Synthesis (Zod schemas in the Next.js app, backed by the Prisma models in `ERD.md`) — must be finalized before Critic Agent is built, since Critic reasons over these structures directly (PRD.md dependency note, Week 6).
+2. **Langfuse wiring** — session_id generated at Orchestrator, passed to every child agent call and every tool call as a nested span. Build this in Week 1–2 alongside the Next.js skeleton, not bolted on later — retrofitting tracing is much more painful than building it in from the first agent call.
 3. **MCP tool bindings** — Web Search, Web Fetch, ClinicalTrials.gov, PubMed, SEC EDGAR. Validate ClinicalTrials.gov and SEC EDGAR specifically before building any research agent that depends on them (PRD.md explicit Week 2 dependency).
 4. **Shared "label" taxonomy** (`Fact | Assumption | Inference | Unknown`) — implement as a single shared enum/type used by every agent's output schema, not reinvented per agent.
 
@@ -277,7 +279,7 @@ Since Clinical Research and Competitive Intelligence both hit ClinicalTrials.gov
 
 | Week | Build |
 |---|---|
-| 1–2 | FastAPI + Next.js skeleton, Langfuse wiring, MCP tool bindings validated (ClinicalTrials.gov + SEC EDGAR first), shared schema/label taxonomy defined |
+| 1–2 | Next.js + Prisma/Postgres skeleton, Langfuse wiring, MCP tool bindings validated (ClinicalTrials.gov + SEC EDGAR first), shared schema/label taxonomy defined |
 | 3–4 | Orchestrator Agent (dispatch + retry + Langfuse tracing) built and tested against a single agent first: Clinical Research Agent, end-to-end including its guardrails |
 | 5 | Competitive Intelligence, Commercial Opportunity, Regulatory Agents — build against the finalized schemas from Week 1–2; wire Commercial's soft dependency on Competitive |
 | 6 | Deal Comparables Agent (with its no-fabrication guardrail as the first thing to test), then Critic Agent once all 5 research schemas are stable |

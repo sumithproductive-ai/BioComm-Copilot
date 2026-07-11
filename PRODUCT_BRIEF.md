@@ -129,16 +129,18 @@ The system never:
 
 ## Technical Architecture
 
+*Originally spec'd as a FastAPI (Python) backend behind a Next.js frontend. Migrated to a single full-stack TypeScript application (see ERD.md, issue #1) — the agents run as Next.js Server Actions/Route Handlers rather than a separate Python service. The agent roster, guardrails, and trust standards below are unchanged; only the implementation language and deployment topology changed.*
+
 | Layer | Technology |
 |---|---|
 | Agents / LLM | Claude (claude-sonnet-4-6 / claude-opus-4-8) |
-| Orchestration | Claude API multi-agent with tool use |
-| MCP Integrations | Web search, web fetch, ClinicalTrials.gov, PubMed, SEC EDGAR |
-| Backend API | FastAPI |
-| Frontend | Next.js |
+| Orchestration | Claude API multi-agent with tool use, run as Next.js Server Actions/Route Handlers |
+| MCP Integrations | Anthropic MCP connector for Web search, Web fetch, ClinicalTrials.gov, PubMed; a thin custom tool for SEC EDGAR |
+| Application | Next.js (TypeScript, App Router) — full-stack, no separate backend service |
+| Database | PostgreSQL via Prisma (schema: ERD.md) |
 | Observability | Langfuse — traces every agent call, tool use, retry, and output |
-| Deployment | Azure |
-| Structured Output | Typed schemas per agent, validated before synthesis |
+| Deployment | Azure — Azure App Service + Azure Database for PostgreSQL |
+| Structured Output | Typed schemas per agent (Zod), validated before synthesis |
 
 ---
 

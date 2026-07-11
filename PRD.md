@@ -105,8 +105,8 @@ Biotech BD and licensing professionals at early-stage companies spend 1–3 work
 
 **Deployment**
 - [ ] Application deployed and accessible on Azure
-- [ ] Frontend served via Next.js
-- [ ] Backend API via FastAPI
+- [ ] Full-stack Next.js application (TypeScript) — Server Actions/Route Handlers run the agents directly, no separate backend service
+- [ ] Postgres database (Azure Database for PostgreSQL) accessed via Prisma
 
 ### Nice-to-Have — P1
 
@@ -184,7 +184,7 @@ Biotech BD and licensing professionals at early-stage companies spend 1–3 work
 
 | Week | Focus |
 |---|---|
-| 1–2 | Architecture finalized, repo scaffolded, FastAPI + Next.js skeleton, Langfuse connected |
+| 1–2 | Architecture finalized, repo scaffolded, Next.js + Prisma/Postgres skeleton, Langfuse connected |
 | 3–4 | Orchestrator Agent + Clinical Research Agent built and tested end-to-end |
 | 5 | Competitive Intelligence, Commercial Opportunity, and Regulatory Agents |
 | 6 | Deal Comparables Agent + Critic Agent |
