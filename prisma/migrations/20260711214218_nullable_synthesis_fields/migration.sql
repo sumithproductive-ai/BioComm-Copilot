@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "memo_run" ALTER COLUMN "asOfDate" DROP NOT NULL,
+ALTER COLUMN "elapsedMs" DROP NOT NULL,
+ALTER COLUMN "generatedAt" DROP NOT NULL;

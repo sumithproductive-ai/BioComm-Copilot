@@ -1,0 +1,455 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+//
+// Translated directly from ERD.md — see that file for the rationale behind
+// every table, join table, and enum below.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums (ERD.md "Enumerated types")
+// ---------------------------------------------------------------------------
+
+enum ClaimLabel {
+  Fact
+  Assumption
+  Inference
+  Unknown
+}
+
+enum CommercialOpportunityRating {
+  High
+  Medium
+  Low
+}
+
+enum RecommendedNextStep {
+  ContinueDiligence
+  GatherMoreData
+  DoNotPursue
+}
+
+enum TrialStatus {
+  Active
+  Completed
+  Terminated
+  Recruiting
+}
+
+enum DealType {
+  License
+  Acquisition
+}
+
+enum CompStrength {
+  Direct
+  Approximate
+}
+
+enum SourceType {
+  ClinicalTrialsGov
+  Pubmed
+  SecFiling
+  PressRelease
+  FdaLabel
+  FdaGuidance
+  CompanyWebsite
+  News
+  ConferenceAbstract
+  MarketReport
+  AnalystCoverage
+  ApprovalLetter
+  LicensingAnnouncement
+  Other
+}
+
+enum CriticFlagType {
+  UnsupportedClaim
+  MissingCompetitor
+  AssumptionAsFact
+  UndisclosedTerms
+  StaleData
+  OverconfidentRegulatory
+  Contradiction
+}
+
+// ---------------------------------------------------------------------------
+// Root aggregate
+// ---------------------------------------------------------------------------
+
+model MemoRun {
+  id         String  @id @default(uuid()) @db.Uuid
+  target     String
+  modality   String
+  stage      String
+  indication String
+  context    String?
+
+  // Set by the Synthesis Agent once a run completes (AGENT_PLAN.md §4.8) — null while a run is in progress
+  asOfDate    DateTime? @db.Date
+  elapsedMs   Int?
+  generatedAt DateTime? @db.Timestamptz(6)
+
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+  langfuseSessionId String?
+
+  // Clinical (mechanism of action is singleton per run; citations via join table)
+  mechanismSummary String?
+  mechanismLabel   ClaimLabel?
+
+  // Commercial (singleton per-run fields)
+  patientPopulationValue      String?
+  patientPopulationLabel      ClaimLabel?
+  patientPopulationCitationId String?     @db.Uuid
+  patientPopulationCitation   Citation?   @relation("PatientPopulationCitation", fields: [patientPopulationCitationId], references: [id])
+
+  unmetNeedSummary String?
+
+  marketCrowdingSummary    String?
+  marketCrowdingConsistent Boolean?
+
+  differentiationSummary String?
+  differentiationLabel   ClaimLabel?
+
+  // Regulatory (singleton per-run field)
+  developmentTimelineSummary String?
+  developmentTimelineLabel   ClaimLabel?
+
+  // Deal comparables (singleton per-run state)
+  noCompFound       Boolean @default(false)
+  noCompExplanation String?
+
+  // Critic (singleton per-run summary; individual flags are their own table)
+  hasCriticalFlags     Boolean @default(false)
+  reviewerNotesSummary String?
+
+  decisionSummary DecisionSummary?
+
+  citations               Citation[]
+  mechanismCitations      MechanismCitation[]
+  trials                  Trial[]
+  safetySignals           SafetySignal[]
+  similarDrugFailures     SimilarDrugFailure[]
+  approvedCompetitors     ApprovedCompetitor[]
+  lateStagePipelineAssets LateStagePipelineAsset[]
+  positioningGaps         PositioningGap[]
+  unmetNeedCitations      UnmetNeedCitation[]
+  comparableDeals         ComparableDeal[]
+  guidanceDocuments       GuidanceDocument[]
+  priorApprovals          PriorApproval[]
+  endpointPrecedents      EndpointPrecedent[]
+  criticFlags             CriticFlag[]
+  keyRisks                KeyRisk[]
+  routeRecommendations    RouteRecommendation[]
+
+  @@map("memo_run")
+}
+
+// ---------------------------------------------------------------------------
+// Decision Summary (Synthesis Agent's top-level output — AGENT_PLAN.md §4.8)
+// ---------------------------------------------------------------------------
+
+model DecisionSummary {
+  id        String  @id @default(uuid()) @db.Uuid
+  memoRunId String  @unique @db.Uuid
+  memoRun   MemoRun @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+
+  commercialOpportunity CommercialOpportunityRating
+  confidenceScore       Decimal                     @db.Decimal(3, 1)
+
+  // Confidence score components — AGENT_PLAN.md §5.1's weighted formula
+  clinicalDataCompleteness        Decimal @db.Decimal(4, 3)
+  competitiveCoverageCompleteness Decimal @db.Decimal(4, 3)
+  commercialSourceQuality         Decimal @db.Decimal(4, 3)
+  regulatoryPrecedentStrength     Decimal @db.Decimal(4, 3)
+  inverseCriticFlagSeverity       Decimal @db.Decimal(4, 3)
+
+  keyRisksCount             Int
+  comparableDealsFoundCount Int
+  recommendedNextStep       RecommendedNextStep
+
+  @@map("decision_summary")
+}
+
+// ---------------------------------------------------------------------------
+// Citation — the shared source-of-truth table (ERD.md design note)
+// ---------------------------------------------------------------------------
+
+model Citation {
+  id        String  @id @default(uuid()) @db.Uuid
+  memoRunId String  @db.Uuid
+  memoRun   MemoRun @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+
+  sourceType    SourceType
+  sourceUrl     String
+  externalId    String?
+  accessedDate  DateTime   @db.Date
+  publishedDate DateTime?  @db.Date
+
+  patientPopulationOf MemoRun[] @relation("PatientPopulationCitation")
+
+  mechanismCitations         MechanismCitation[]
+  trials                     Trial[]
+  safetySignals              SafetySignal[]
+  similarDrugFailures        SimilarDrugFailure[]
+  approvedCompetitors        ApprovedCompetitor[]
+  lateStagePipelineAssets    LateStagePipelineAsset[]
+  unmetNeedCitations         UnmetNeedCitation[]
+  comparableDeals            ComparableDeal[]
+  priorApprovals             PriorApproval[]
+  endpointPrecedentCitations EndpointPrecedentCitation[]
+  keyRisks                   KeyRisk[]
+
+  @@map("citation")
+}
+
+// ---------------------------------------------------------------------------
+// Clinical Research Agent (AGENT_PLAN.md §4.2)
+// ---------------------------------------------------------------------------
+
+model MechanismCitation {
+  memoRunId  String   @db.Uuid
+  memoRun    MemoRun  @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+  citationId String   @db.Uuid
+  citation   Citation @relation(fields: [citationId], references: [id], onDelete: Cascade)
+
+  @@id([memoRunId, citationId])
+  @@map("mechanism_citation")
+}
+
+model Trial {
+  id         String    @id @default(uuid()) @db.Uuid
+  memoRunId  String    @db.Uuid
+  memoRun    MemoRun   @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+  citationId String?   @db.Uuid
+  citation   Citation? @relation(fields: [citationId], references: [id])
+
+  nctId           String
+  title           String
+  phase           String
+  status          TrialStatus
+  statusAsOfDate  DateTime    @db.Date
+  sponsor         String
+  enrollment      Int?
+  primaryEndpoint String?
+  isStale         Boolean     @default(false)
+
+  @@map("trial")
+}
+
+model SafetySignal {
+  id         String    @id @default(uuid()) @db.Uuid
+  memoRunId  String    @db.Uuid
+  memoRun    MemoRun   @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+  citationId String?   @db.Uuid
+  citation   Citation? @relation(fields: [citationId], references: [id])
+
+  description String
+  label       ClaimLabel
+
+  @@map("safety_signal")
+}
+
+model SimilarDrugFailure {
+  id         String    @id @default(uuid()) @db.Uuid
+  memoRunId  String    @db.Uuid
+  memoRun    MemoRun   @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+  citationId String?   @db.Uuid
+  citation   Citation? @relation(fields: [citationId], references: [id])
+
+  drug             String
+  reasonForFailure String
+  label            ClaimLabel
+
+  @@map("similar_drug_failure")
+}
+
+// ---------------------------------------------------------------------------
+// Competitive Intelligence Agent (AGENT_PLAN.md §4.3)
+// ---------------------------------------------------------------------------
+
+model ApprovedCompetitor {
+  id         String    @id @default(uuid()) @db.Uuid
+  memoRunId  String    @db.Uuid
+  memoRun    MemoRun   @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+  citationId String?   @db.Uuid
+  citation   Citation? @relation(fields: [citationId], references: [id])
+
+  drug         String
+  company      String
+  mechanism    String
+  approvalDate DateTime @db.Date
+
+  @@map("approved_competitor")
+}
+
+model LateStagePipelineAsset {
+  id         String    @id @default(uuid()) @db.Uuid
+  memoRunId  String    @db.Uuid
+  memoRun    MemoRun   @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+  citationId String?   @db.Uuid
+  citation   Citation? @relation(fields: [citationId], references: [id])
+
+  drug      String
+  company   String
+  mechanism String
+  phase     String
+  status    String
+
+  @@map("late_stage_pipeline_asset")
+}
+
+model PositioningGap {
+  id        String  @id @default(uuid()) @db.Uuid
+  memoRunId String  @db.Uuid
+  memoRun   MemoRun @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+
+  description String
+  label       ClaimLabel
+
+  @@map("positioning_gap")
+}
+
+// ---------------------------------------------------------------------------
+// Commercial Opportunity Agent (AGENT_PLAN.md §4.4)
+// singleton fields live on MemoRun — see ERD.md's normalization note
+// ---------------------------------------------------------------------------
+
+model UnmetNeedCitation {
+  memoRunId  String   @db.Uuid
+  memoRun    MemoRun  @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+  citationId String   @db.Uuid
+  citation   Citation @relation(fields: [citationId], references: [id], onDelete: Cascade)
+
+  @@id([memoRunId, citationId])
+  @@map("unmet_need_citation")
+}
+
+// ---------------------------------------------------------------------------
+// Deal Comparables Agent (AGENT_PLAN.md §4.5)
+// no_comp_found / no_comp_explanation live on MemoRun
+// ---------------------------------------------------------------------------
+
+model ComparableDeal {
+  id         String    @id @default(uuid()) @db.Uuid
+  memoRunId  String    @db.Uuid
+  memoRun    MemoRun   @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+  citationId String?   @db.Uuid
+  citation   Citation? @relation(fields: [citationId], references: [id])
+
+  asset          String
+  company        String
+  stageAtDeal    String
+  dealType       DealType
+  disclosedTerms String
+  compStrength   CompStrength
+
+  @@map("comparable_deal")
+}
+
+// ---------------------------------------------------------------------------
+// Regulatory Agent (AGENT_PLAN.md §4.6)
+// development_timeline_estimate lives on MemoRun
+// ---------------------------------------------------------------------------
+
+model GuidanceDocument {
+  id        String  @id @default(uuid()) @db.Uuid
+  memoRunId String  @db.Uuid
+  memoRun   MemoRun @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+
+  title     String
+  url       String
+  relevance String
+
+  @@map("guidance_document")
+}
+
+model PriorApproval {
+  id         String    @id @default(uuid()) @db.Uuid
+  memoRunId  String    @db.Uuid
+  memoRun    MemoRun   @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+  citationId String?   @db.Uuid
+  citation   Citation? @relation(fields: [citationId], references: [id])
+
+  drug         String
+  approvalDate DateTime @db.Date
+
+  @@map("prior_approval")
+}
+
+model EndpointPrecedent {
+  id        String  @id @default(uuid()) @db.Uuid
+  memoRunId String  @db.Uuid
+  memoRun   MemoRun @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+
+  endpoint          String
+  sourcedFromLabels String[]
+
+  citations EndpointPrecedentCitation[]
+
+  @@map("endpoint_precedent")
+}
+
+model EndpointPrecedentCitation {
+  endpointPrecedentId String            @db.Uuid
+  endpointPrecedent   EndpointPrecedent @relation(fields: [endpointPrecedentId], references: [id], onDelete: Cascade)
+  citationId          String            @db.Uuid
+  citation            Citation          @relation(fields: [citationId], references: [id], onDelete: Cascade)
+
+  @@id([endpointPrecedentId, citationId])
+  @@map("endpoint_precedent_citation")
+}
+
+// ---------------------------------------------------------------------------
+// Critic Agent (AGENT_PLAN.md §4.7)
+// has_critical_flags / reviewer_notes_summary live on MemoRun
+// ---------------------------------------------------------------------------
+
+model CriticFlag {
+  id        String  @id @default(uuid()) @db.Uuid
+  memoRunId String  @db.Uuid
+  memoRun   MemoRun @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+
+  type        CriticFlagType
+  section     String
+  description String
+
+  @@map("critic_flag")
+}
+
+// ---------------------------------------------------------------------------
+// Key Risks / Route Recommendations — memo sections required by PRD.md /
+// PRODUCT_BRIEF.md that AGENT_PLAN.md's agent schemas never defined a home
+// for. See ERD.md's design notes.
+// ---------------------------------------------------------------------------
+
+model KeyRisk {
+  id         String    @id @default(uuid()) @db.Uuid
+  memoRunId  String    @db.Uuid
+  memoRun    MemoRun   @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+  citationId String?   @db.Uuid
+  citation   Citation? @relation(fields: [citationId], references: [id])
+
+  description String
+  label       ClaimLabel
+
+  @@map("key_risk")
+}
+
+model RouteRecommendation {
+  id        String  @id @default(uuid()) @db.Uuid
+  memoRunId String  @db.Uuid
+  memoRun   MemoRun @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+
+  description String
+  label       ClaimLabel @default(Assumption)
+
+  @@map("route_recommendation")
+}
