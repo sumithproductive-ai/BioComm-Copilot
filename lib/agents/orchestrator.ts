@@ -1,9 +1,9 @@
 // Orchestrator — AGENT_PLAN.md §4.1. Top-level coordinator; never touches
-// sources directly. Clinical Research + Competitive Intelligence exist so
-// far — the other 3 research agent slots are wired for when they're built
-// (build order: Commercial Opportunity, Regulatory, then Deal Comparables),
-// each reported as "incomplete" with a clear reason until then rather than
-// silently absent from the manifest.
+// sources directly. Clinical Research, Competitive Intelligence, and
+// Commercial Opportunity exist so far — the other 2 research agent slots
+// are wired for when they're built (build order: Regulatory, then Deal
+// Comparables), each reported as "incomplete" with a clear reason until
+// then rather than silently absent from the manifest.
 
 import { randomUUID } from "node:crypto";
 import type { LangfuseSpanClient } from "langfuse";
@@ -12,7 +12,11 @@ import {
   runCompetitiveIntelligenceAgent,
   type CompetitiveIntelligenceInput,
 } from "./competitive-intelligence";
-import type { ResearchOutputs } from "./schemas";
+import {
+  runCommercialOpportunityAgent,
+  type CommercialOpportunityInput,
+} from "./commercial-opportunity";
+import type { CompetitiveIntelligenceOutput, ResearchOutputs } from "./schemas";
 import { langfuse, isLangfuseConfigured } from "./observability";
 
 export type OrchestratorInput = {
@@ -111,29 +115,47 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
     modality: input.modality,
     indication: input.indication,
   };
+  const commercialInput: CommercialOpportunityInput = {
+    target: input.target,
+    modality: input.modality,
+    indication: input.indication,
+  };
 
   // Dispatch every research agent concurrently — Promise.allSettled so one
   // slow/failed agent never blocks the others (AGENT_PLAN.md §3's explicit
-  // failure mode to guard against). Both agents query ClinicalTrials.gov —
-  // this is exactly the concurrent-agent scenario the shared rate limiter
-  // (lib/agents/tools/rate-limiter.ts) was built for.
-  const [clinicalResult, competitiveResult] = await Promise.allSettled([
+  // failure mode to guard against). Clinical and Competitive both query
+  // ClinicalTrials.gov — this is exactly the concurrent-agent scenario the
+  // shared rate limiter (lib/agents/tools/rate-limiter.ts) was built for.
+  //
+  // Commercial Opportunity has a soft dependency on Competitive
+  // Intelligence's output (§3): it still dispatches concurrently, not after
+  // Competitive finishes, but its own agent function awaits
+  // competitiveOutputOnlyPromise internally for a fast reconciliation step
+  // before returning. Deriving that promise via .then() doesn't re-run
+  // Competitive — both consumers share the one underlying call.
+  const competitivePromise = runWithRetries(runTrace, "competitive", (span) =>
+    runCompetitiveIntelligenceAgent(competitiveInput, span)
+  );
+  const competitiveOutputOnlyPromise: Promise<CompetitiveIntelligenceOutput | null> =
+    competitivePromise.then((r) => r.output);
+
+  const [clinicalResult, competitiveResult, commercialResult] = await Promise.allSettled([
     runWithRetries(runTrace, "clinical", (span) => runClinicalResearchAgent(clinicalInput, span)),
-    runWithRetries(runTrace, "competitive", (span) =>
-      runCompetitiveIntelligenceAgent(competitiveInput, span)
+    competitivePromise,
+    runWithRetries(runTrace, "commercial", (span) =>
+      runCommercialOpportunityAgent(commercialInput, span, competitiveOutputOnlyPromise)
     ),
   ]);
 
   const agentStatuses = {
     clinical: "failed",
     competitive: "failed",
-    commercial: "incomplete",
+    commercial: "failed",
     dealComparables: "incomplete",
     regulatory: "incomplete",
   } as Record<keyof ResearchOutputs, AgentStatus>;
 
   const agentNotes: Partial<Record<keyof ResearchOutputs, string>> = {
-    commercial: "Agent not yet built",
     dealComparables: "Agent not yet built",
     regulatory: "Agent not yet built",
   };
@@ -160,6 +182,14 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
     if (competitiveResult.value.note) agentNotes.competitive = competitiveResult.value.note;
   } else {
     agentNotes.competitive = `Unexpected rejection: ${String(competitiveResult.reason)}`;
+  }
+
+  if (commercialResult.status === "fulfilled") {
+    agentStatuses.commercial = commercialResult.value.status;
+    researchOutputs.commercial = commercialResult.value.output;
+    if (commercialResult.value.note) agentNotes.commercial = commercialResult.value.note;
+  } else {
+    agentNotes.commercial = `Unexpected rejection: ${String(commercialResult.reason)}`;
   }
 
   const elapsedMs = Date.now() - start;
