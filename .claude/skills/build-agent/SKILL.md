@@ -49,12 +49,18 @@ and explain why. Do not estimate or infer a deal that was not publicly
 reported."* Vague guardrail language is how fabrication guardrails fail in
 practice.
 
-**Tools:** wire the MCP connector for the sources named in the agent's
-`AGENT_PLAN.md` subsection (Web Search, Web Fetch, ClinicalTrials.gov,
-PubMed). No public MCP server → thin custom fetch-based tool instead (this
-is the SEC EDGAR case). Follow the source-priority order the spec states
-where it states one (Clinical: registry/PubMed before general web search,
-to minimize hallucination risk).
+**Tools: plain fetch wrappers, not MCP.** No MCP server exists or should
+exist for this project — BioComm Copilot has exactly one consumer of these
+tools (its own backend calling the Anthropic API directly), and MCP exists
+to solve a multi-consumer problem this app doesn't have. Every data source
+named in the agent's `AGENT_PLAN.md` subsection (ClinicalTrials.gov,
+PubMed, FDA/openFDA, SEC EDGAR) gets the same treatment: a thin fetch-based
+tool wrapper in `lib/agents/tools/`, going through the shared
+`fetch-with-retry.ts` + `rate-limiter.ts`, registered directly as an
+`Anthropic.Tool`. Web search is the one exception — it's Anthropic's native
+server-side `web_search` tool type, not a custom wrapper. Follow the
+source-priority order the spec states where it states one (Clinical:
+registry/PubMed before general web search, to minimize hallucination risk).
 
 **Retries are NOT the agent's job.** An agent module makes one attempt and
 throws (or returns a typed failure) on an invalid/failed result. The
@@ -98,6 +104,29 @@ build these in from the start instead of hitting them again per agent:
    returns (ClinicalTrials.gov gives month-only dates) against the schema's
    `z.iso.date()` expectation — confirm real field shapes against a live
    API response before writing the parser, don't guess from docs.
+
+## Lessons from Competitive Intelligence Agent — a schema with 11+ full objects behaves differently than a small one
+
+5. **A malformed `submit_findings` call is a real failure mode at scale**,
+   not a hypothetical — confirmed once: the model garbled an entire array
+   field into a single string containing literal `<parameter name="...">`
+   text (looks like it briefly reverted to a different tool-call
+   convention). Don't just throw on a Zod validation failure — `safeParse`
+   it, and on failure feed the actual error message back as an `is_error:
+   true` tool_result so the model can self-correct within the same
+   conversation. Throwing forces the Orchestrator to restart the whole
+   agent from scratch on retry, burning a full research pass to fix what
+   was often just a formatting slip.
+6. **`max_tokens: 4096` is not enough once a schema has 10+ full objects
+   with nested citations.** Confirmed via `stop_reason: "max_tokens"` in a
+   real trace — the model was cut off mid-"thinking" before it could act on
+   research it had already gathered, and two runs before this fix was
+   found produced validly-empty (not malformed, not erroring — just empty)
+   results, most likely from the same truncation happening at a worse
+   point. Use `8192` as the default for every agent, not just the ones that
+   look complex up front — Clinical Research hasn't shown this symptom yet,
+   but it uses the same "thinking" + tool-use pattern and got bumped
+   preemptively rather than waiting to hit it.
 
 **Observability is not optional per-agent wiring — it's a parameter.**
 Every agent function takes an optional `parentSpan?: LangfuseSpanClient`

@@ -12,7 +12,7 @@ import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
 const client = new Anthropic();
 
 const MODEL = "claude-sonnet-5";
-const MAX_ITERATIONS = 8;
+const MAX_ITERATIONS = 10;
 
 const SYSTEM_PROMPT = `You are the Clinical Research Agent for BioComm Copilot, a commercialization intelligence system for ulcerative colitis (UC) therapy assets.
 
@@ -119,7 +119,10 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
 
     const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 4096,
+      // 4096 was observed truncating mid-"thinking" on a real Competitive
+      // Intelligence run (stop_reason: max_tokens, cut off before it could
+      // act on research it had already gathered) — same risk here.
+      max_tokens: 8192,
       system: SYSTEM_PROMPT,
       tools: isLastChance
         ? [submitFindingsTool]
@@ -145,9 +148,28 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
       .filter(isToolUseBlock)
       .find((b) => b.name === "submit_findings");
     if (submitBlock) {
-      return clinicalResearchOutputSchema.parse(
+      const parsed = clinicalResearchOutputSchema.safeParse(
         backfillEmptyArrayFields(submitBlock.input)
       );
+      if (parsed.success) return parsed.data;
+      // Malformed structured output (confirmed in testing: the model can
+      // garble a large tool call into a single string field instead of the
+      // real JSON shape) — feed the validation error back as a tool_result
+      // so the model can self-correct in this same conversation, instead of
+      // throwing and forcing the Orchestrator to restart the whole agent
+      // from scratch on its next retry.
+      messages.push({
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: submitBlock.id,
+            content: `submit_findings input failed validation: ${parsed.error.message}. Re-read the schema and call submit_findings again with the corrected, complete JSON structure — every field must be the correct type (arrays are actual arrays, objects are actual objects, not strings).`,
+            is_error: true,
+          },
+        ],
+      });
+      continue;
     }
 
     const toolUseBlocks = response.content.filter(isToolUseBlock);
