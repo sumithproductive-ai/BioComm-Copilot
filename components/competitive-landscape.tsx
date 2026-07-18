@@ -15,8 +15,16 @@ function CitationLink({
       rel="noopener noreferrer"
       className="text-xs text-muted-foreground underline underline-offset-2 hover:text-brand-navy"
     >
-      Source ({citation.sourceType})
+      Source
     </a>
+  );
+}
+
+function TableHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <th className="border-b border-border px-3 py-2 text-left text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+      {children}
+    </th>
   );
 }
 
@@ -28,26 +36,36 @@ export function CompetitiveLandscapeSection({ data }: { data: CompetitiveLandsca
           <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
             Approved Competitors ({data.approvedCompetitors.length})
           </h3>
-          <div className="flex flex-col gap-2">
-            {data.approvedCompetitors.map((competitor) => (
-              <div
-                key={competitor.id}
-                className="rounded-[9px] border border-border bg-white px-4 py-3"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-sm font-medium text-brand-navy">{competitor.drug}</p>
-                  <Badge variant="secondary">
-                    {new Date(competitor.approvalDate).getFullYear()}
-                  </Badge>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {competitor.company} · {competitor.mechanism}
-                </p>
-                <div className="mt-2">
-                  <CitationLink citation={competitor.citation} />
-                </div>
-              </div>
-            ))}
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr>
+                  <TableHeader>Therapy</TableHeader>
+                  <TableHeader>Mechanism</TableHeader>
+                  <TableHeader>Status</TableHeader>
+                  <TableHeader>Source</TableHeader>
+                </tr>
+              </thead>
+              <tbody>
+                {data.approvedCompetitors.map((competitor) => (
+                  <tr key={competitor.id} className="border-b border-border last:border-b-0">
+                    <td className="px-3 py-2.5">
+                      <p className="font-medium text-brand-navy">{competitor.drug}</p>
+                      <p className="text-xs text-muted-foreground">{competitor.company}</p>
+                    </td>
+                    <td className="px-3 py-2.5 text-muted-foreground">{competitor.mechanism}</td>
+                    <td className="px-3 py-2.5">
+                      <Badge variant="outline" className="border-emerald-200 bg-emerald-50 font-medium text-emerald-700">
+                        Approved {new Date(competitor.approvalDate).getFullYear()}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <CitationLink citation={competitor.citation} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -57,25 +75,35 @@ export function CompetitiveLandscapeSection({ data }: { data: CompetitiveLandsca
           <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
             Late-Stage Pipeline ({data.lateStagePipelineAssets.length})
           </h3>
-          <div className="flex flex-col gap-2">
-            {data.lateStagePipelineAssets.map((asset) => (
-              <div
-                key={asset.id}
-                className="rounded-[9px] border border-border bg-white px-4 py-3"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-sm font-medium text-brand-navy">{asset.drug}</p>
-                  <Badge variant="secondary">{asset.phase}</Badge>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {asset.company} · {asset.mechanism}
-                </p>
-                <p className="mt-1 text-sm text-foreground">{asset.status}</p>
-                <div className="mt-2">
-                  <CitationLink citation={asset.citation} />
-                </div>
-              </div>
-            ))}
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr>
+                  <TableHeader>Therapy</TableHeader>
+                  <TableHeader>Mechanism</TableHeader>
+                  <TableHeader>Status</TableHeader>
+                  <TableHeader>Source</TableHeader>
+                </tr>
+              </thead>
+              <tbody>
+                {data.lateStagePipelineAssets.map((asset) => (
+                  <tr key={asset.id} className="border-b border-border last:border-b-0">
+                    <td className="px-3 py-2.5">
+                      <p className="font-medium text-brand-navy">{asset.drug}</p>
+                      <p className="text-xs text-muted-foreground">{asset.company}</p>
+                    </td>
+                    <td className="px-3 py-2.5 text-muted-foreground">{asset.mechanism}</td>
+                    <td className="px-3 py-2.5">
+                      <Badge variant="secondary">{asset.phase}</Badge>
+                      <p className="mt-1 text-xs text-muted-foreground">{asset.status}</p>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <CitationLink citation={asset.citation} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

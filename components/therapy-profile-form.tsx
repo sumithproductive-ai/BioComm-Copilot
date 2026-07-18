@@ -17,8 +17,8 @@ import {
 
 const initialState: CreateMemoRunState = {};
 
-// Agent roster the memo will run — AGENT_PLAN.md §2 (5 research agents + Critic;
-// Orchestrator and Synthesis coordinate/compile and aren't user-facing here).
+// Agent roster the memo will run — AGENT_PLAN.md §2 (5 research agents +
+// Critic + Synthesis; the Orchestrator coordinates and isn't user-facing).
 const AGENTS = [
   "Clinical Research",
   "Competitive Intelligence",
@@ -26,6 +26,7 @@ const AGENTS = [
   "Deal Comparables",
   "Regulatory",
   "Critic Review",
+  "Synthesis",
 ];
 
 function FieldLabel({
