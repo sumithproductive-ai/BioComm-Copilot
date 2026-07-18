@@ -26,6 +26,7 @@ import type {
   SynthesisOutput,
 } from "./schemas";
 import { langfuse, isLangfuseConfigured } from "./observability";
+import type { AgentLiveStatus } from "./roster";
 
 export type OrchestratorInput = {
   target: string;
@@ -33,6 +34,19 @@ export type OrchestratorInput = {
   stage: string;
   indication: string;
   context?: string;
+};
+
+// Story 2 — reports live status transitions as they happen, separate from
+// the final AgentStatus (complete/incomplete/failed) returned in
+// RunManifest once the whole run is done. The Orchestrator does no DB
+// writes itself (same boundary rule agents follow) — the caller supplies
+// where these go.
+export type OrchestratorOptions = {
+  onAgentStatusChange?: (
+    agentName: string,
+    status: AgentLiveStatus,
+    info: { attempt: number; note?: string }
+  ) => void | Promise<void>;
 };
 
 export type AgentStatus = "complete" | "incomplete" | "failed";
@@ -73,6 +87,7 @@ async function runWithRetries<T>(
   runTrace: ReturnType<typeof langfuse.trace> | null,
   name: string,
   fn: (span?: LangfuseSpanClient) => Promise<T>,
+  onAgentStatusChange: OrchestratorOptions["onAgentStatusChange"],
   maxRetries = MAX_RETRIES_PER_AGENT
 ): Promise<{ status: AgentStatus; output: T | null; note?: string }> {
   let lastError: unknown;
@@ -81,9 +96,11 @@ async function runWithRetries<T>(
       name: `${name}-attempt-${attempt}`,
       metadata: { agent: name, attempt, maxRetries },
     });
+    await onAgentStatusChange?.(name, "Running", { attempt });
     try {
       const output = await fn(span);
       span?.end({ output, metadata: { result: "success" } });
+      await onAgentStatusChange?.(name, "Complete", { attempt });
       return { status: "complete", output };
     } catch (err) {
       lastError = err;
@@ -93,10 +110,15 @@ async function runWithRetries<T>(
     }
   }
   const message = lastError instanceof Error ? lastError.message : String(lastError);
+  await onAgentStatusChange?.(name, "Failed", { attempt: maxRetries, note: message });
   return { status: "incomplete", output: null, note: `Failed after ${maxRetries + 1} attempts: ${message}` };
 }
 
-export async function runOrchestrator(input: OrchestratorInput): Promise<RunManifest> {
+export async function runOrchestrator(
+  input: OrchestratorInput,
+  options: OrchestratorOptions = {}
+): Promise<RunManifest> {
+  const { onAgentStatusChange } = options;
   if (!input.target || !input.modality || !input.stage || !input.indication) {
     throw new Error("target, modality, stage, and indication are all required");
   }
@@ -159,22 +181,41 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
   // competitiveOutputOnlyPromise internally for a fast reconciliation step
   // before returning. Deriving that promise via .then() doesn't re-run
   // Competitive — both consumers share the one underlying call.
-  const competitivePromise = runWithRetries(runTrace, "competitive", (span) =>
-    runCompetitiveIntelligenceAgent(competitiveInput, span)
+  const competitivePromise = runWithRetries(
+    runTrace,
+    "competitive",
+    (span) => runCompetitiveIntelligenceAgent(competitiveInput, span),
+    onAgentStatusChange
   );
   const competitiveOutputOnlyPromise: Promise<CompetitiveIntelligenceOutput | null> =
     competitivePromise.then((r) => r.output);
 
   const [clinicalResult, competitiveResult, commercialResult, regulatoryResult, dealComparablesResult] =
     await Promise.allSettled([
-      runWithRetries(runTrace, "clinical", (span) => runClinicalResearchAgent(clinicalInput, span)),
-      competitivePromise,
-      runWithRetries(runTrace, "commercial", (span) =>
-        runCommercialOpportunityAgent(commercialInput, span, competitiveOutputOnlyPromise)
+      runWithRetries(
+        runTrace,
+        "clinical",
+        (span) => runClinicalResearchAgent(clinicalInput, span),
+        onAgentStatusChange
       ),
-      runWithRetries(runTrace, "regulatory", (span) => runRegulatoryAgent(regulatoryInput, span)),
-      runWithRetries(runTrace, "dealComparables", (span) =>
-        runDealComparablesAgent(dealComparablesInput, span)
+      competitivePromise,
+      runWithRetries(
+        runTrace,
+        "commercial",
+        (span) => runCommercialOpportunityAgent(commercialInput, span, competitiveOutputOnlyPromise),
+        onAgentStatusChange
+      ),
+      runWithRetries(
+        runTrace,
+        "regulatory",
+        (span) => runRegulatoryAgent(regulatoryInput, span),
+        onAgentStatusChange
+      ),
+      runWithRetries(
+        runTrace,
+        "dealComparables",
+        (span) => runDealComparablesAgent(dealComparablesInput, span),
+        onAgentStatusChange
       ),
     ]);
 
@@ -246,8 +287,11 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
     indication: input.indication,
     researchOutputs,
   };
-  const criticRunResult = await runWithRetries(runTrace, "critic", (span) =>
-    runCriticAgent(criticInput, span)
+  const criticRunResult = await runWithRetries(
+    runTrace,
+    "critic",
+    (span) => runCriticAgent(criticInput, span),
+    onAgentStatusChange
   );
   const criticStatus = criticRunResult.status;
   const criticOutput = criticRunResult.output;
@@ -263,8 +307,11 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
     researchOutputs,
     criticOutput,
   };
-  const synthesisRunResult = await runWithRetries(runTrace, "synthesis", (span) =>
-    runSynthesisAgent(synthesisInput, span)
+  const synthesisRunResult = await runWithRetries(
+    runTrace,
+    "synthesis",
+    (span) => runSynthesisAgent(synthesisInput, span),
+    onAgentStatusChange
   );
   const synthesisStatus = synthesisRunResult.status;
   const synthesisOutput = synthesisRunResult.output;

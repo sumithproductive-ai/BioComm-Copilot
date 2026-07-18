@@ -11,12 +11,13 @@ import {
   getDecisionSummary,
   getKeyRisksAndRecommendations,
   getSourceIndex,
+  getAgentProgress,
 } from "@/lib/agents/persist";
 import { computeEpistemicLedger } from "@/lib/memo/epistemic-ledger";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { RecordRecentRun } from "@/components/record-recent-run";
-import { RunAssessmentButton } from "@/components/run-assessment-button";
+import { AgentProgressSection } from "@/components/agent-progress";
 import { ClinicalLandscapeSection } from "@/components/clinical-landscape";
 import { CompetitiveLandscapeSection } from "@/components/competitive-landscape";
 import { CommercialOpportunitySection } from "@/components/commercial-opportunity";
@@ -54,6 +55,7 @@ export default async function MemoRunPage({
     decisionSummary,
     keyRisksAndRecommendations,
     sourceIndex,
+    agentProgress,
   ] = await Promise.all([
     getClinicalLandscape(id),
     getCompetitiveLandscape(id),
@@ -64,6 +66,7 @@ export default async function MemoRunPage({
     getDecisionSummary(id),
     getKeyRisksAndRecommendations(id),
     getSourceIndex(id),
+    getAgentProgress(id),
   ]);
 
   const hasClinicalResearch =
@@ -106,6 +109,11 @@ export default async function MemoRunPage({
     hasCommercialOpportunity ||
     hasRegulatory ||
     hasDealComparables;
+  // Data only persists once the whole Orchestrator run resolves (Story 2 is
+  // live *status*, not streamed partial content) — so during a run
+  // hasAnyResults stays false the whole time. hasStartedRun is what
+  // actually distinguishes "queued" from "in progress".
+  const hasStartedRun = !!agentProgress && agentProgress.agentProgress.length > 0;
 
   const epistemicLedger = computeEpistemicLedger({
     clinical: clinicalLandscape,
@@ -137,7 +145,12 @@ export default async function MemoRunPage({
 
   return (
     <div className="flex flex-1 justify-center bg-background px-6 py-16">
-      <div className="grid w-full max-w-6xl grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
+      <div
+        className={cn(
+          "grid w-full max-w-6xl grid-cols-1 gap-10",
+          tocSections.length > 0 && "lg:grid-cols-[220px_1fr]"
+        )}
+      >
         {tocSections.length > 0 && (
           <div className="hidden lg:block">
             <MemoToc sections={tocSections} />
@@ -160,7 +173,7 @@ export default async function MemoRunPage({
               <p className="text-xs font-bold tracking-wide text-brand-amber uppercase" id="therapy-profile">
                 {hasDecisionSummary
                   ? "Assessment complete"
-                  : hasAnyResults
+                  : hasStartedRun
                     ? "Assessment in progress"
                     : "Assessment queued"}
               </p>
@@ -187,25 +200,27 @@ export default async function MemoRunPage({
             </div>
           )}
 
-          {(memoRun.context || !hasAnyResults) && (
+          {(memoRun.context || !hasDecisionSummary) && (
             <Card className={CARD_CLASS}>
               <CardContent className="flex flex-col gap-4">
                 {memoRun.context && (
                   <p className="text-sm text-muted-foreground">{memoRun.context}</p>
                 )}
-                {!hasAnyResults && (
+                {!hasDecisionSummary && (
                   <>
-                    <p className="text-sm text-muted-foreground">
-                      All 5 research agents, the Critic Agent, and the Synthesis
-                      Agent are wired up — Clinical Research, Competitive
-                      Intelligence, Commercial Opportunity, Regulatory, Deal
-                      Comparables, an adversarial review pass, and final memo
-                      compilation. This runs five real research agents
-                      concurrently against live ClinicalTrials.gov, PubMed, and
-                      web search data, then Critic review, then Synthesis — not
-                      a demo.
-                    </p>
-                    <RunAssessmentButton memoRunId={memoRun.id} />
+                    {!hasStartedRun && (
+                      <p className="text-sm text-muted-foreground">
+                        All 5 research agents, the Critic Agent, and the Synthesis
+                        Agent are wired up — Clinical Research, Competitive
+                        Intelligence, Commercial Opportunity, Regulatory, Deal
+                        Comparables, an adversarial review pass, and final memo
+                        compilation. This runs five real research agents
+                        concurrently against live ClinicalTrials.gov, PubMed, and
+                        web search data, then Critic review, then Synthesis — not
+                        a demo.
+                      </p>
+                    )}
+                    <AgentProgressSection memoRunId={memoRun.id} initialData={agentProgress} />
                   </>
                 )}
               </CardContent>

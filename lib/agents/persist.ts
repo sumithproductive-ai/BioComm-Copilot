@@ -14,6 +14,7 @@ import type {
   SynthesisOutput,
   CitationRef,
 } from "./schemas";
+import type { AgentLiveStatus } from "./roster";
 
 // Story 9 AC: "If no flags were raised, the section states 'No critical
 // flags identified — standard human review still required'". This is
@@ -514,5 +515,63 @@ export async function getSourceIndex(memoRunId: string) {
   return db.citation.findMany({
     where: { memoRunId },
     orderBy: { accessedDate: "desc" },
+  });
+}
+
+// Live per-agent progress (USER_STORIES.md Story 2). Not agent output —
+// just a status row updated as runOrchestrator's onAgentStatusChange
+// callback fires. AGENT_ROSTER (lib/agents/roster.ts) is the canonical
+// list of agentName keys these rows use.
+
+export async function initializeAgentProgress(memoRunId: string, agentKeys: string[]): Promise<void> {
+  await db.$transaction([
+    db.memoRun.update({ where: { id: memoRunId }, data: { assessmentStartedAt: new Date() } }),
+    ...agentKeys.map((agentName) =>
+      db.agentProgress.upsert({
+        where: { memoRunId_agentName: { memoRunId, agentName } },
+        create: { memoRunId, agentName, status: "Queued", attempt: 0 },
+        update: { status: "Queued", attempt: 0, startedAt: null, completedAt: null, note: null },
+      })
+    ),
+  ]);
+}
+
+export async function upsertAgentRunStatus(
+  memoRunId: string,
+  agentName: string,
+  status: AgentLiveStatus,
+  attempt: number,
+  note?: string
+): Promise<void> {
+  const isTerminal = status === "Complete" || status === "Failed";
+  await db.agentProgress.upsert({
+    where: { memoRunId_agentName: { memoRunId, agentName } },
+    create: {
+      memoRunId,
+      agentName,
+      status,
+      attempt,
+      note,
+      startedAt: status === "Running" ? new Date() : undefined,
+      completedAt: isTerminal ? new Date() : undefined,
+    },
+    update: {
+      status,
+      attempt,
+      note,
+      ...(status === "Running" ? { startedAt: new Date() } : {}),
+      ...(isTerminal ? { completedAt: new Date() } : {}),
+    },
+  });
+}
+
+export type AgentProgressState = Prisma.MemoRunGetPayload<{
+  select: { assessmentStartedAt: true; agentProgress: true };
+}>;
+
+export async function getAgentProgress(memoRunId: string): Promise<AgentProgressState | null> {
+  return db.memoRun.findUnique({
+    where: { id: memoRunId },
+    select: { assessmentStartedAt: true, agentProgress: true },
   });
 }

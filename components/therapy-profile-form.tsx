@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { ArrowRight, CircleAlert } from "lucide-react";
 import { createMemoRun, type CreateMemoRunState } from "@/lib/actions/memo-run";
 import { STAGE_OPTIONS } from "@/lib/validations/therapy-profile";
+import { AGENT_ROSTER } from "@/lib/agents/roster";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,18 +17,6 @@ import {
 } from "@/components/ui/select";
 
 const initialState: CreateMemoRunState = {};
-
-// Agent roster the memo will run — AGENT_PLAN.md §2 (5 research agents +
-// Critic + Synthesis; the Orchestrator coordinates and isn't user-facing).
-const AGENTS = [
-  "Clinical Research",
-  "Competitive Intelligence",
-  "Commercial Opportunity",
-  "Deal Comparables",
-  "Regulatory",
-  "Critic Review",
-  "Synthesis",
-];
 
 function FieldLabel({
   htmlFor,
@@ -160,15 +149,15 @@ export function TherapyProfileForm() {
 
       <div className="flex flex-col items-center gap-3 border-t border-border pt-5">
         <p className="text-xs font-semibold tracking-wide text-muted-foreground/80 uppercase">
-          {AGENTS.length} agents deploy
+          {AGENT_ROSTER.length} agents deploy
         </p>
         <div className="flex flex-wrap justify-center gap-2">
-          {AGENTS.map((agent) => (
+          {AGENT_ROSTER.map((agent) => (
             <span
-              key={agent}
+              key={agent.key}
               className="rounded-md border border-border bg-white px-2 py-0.5 text-[11px] text-muted-foreground"
             >
-              {agent}
+              {agent.label}
             </span>
           ))}
         </div>

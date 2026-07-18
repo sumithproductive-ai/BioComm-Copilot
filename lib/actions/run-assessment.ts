@@ -1,10 +1,12 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { runOrchestrator } from "@/lib/agents/orchestrator";
+import { AGENT_ROSTER } from "@/lib/agents/roster";
 import {
+  initializeAgentProgress,
+  upsertAgentRunStatus,
   persistClinicalResearchOutput,
   persistCompetitiveIntelligenceOutput,
   persistCommercialOpportunityOutput,
@@ -16,14 +18,16 @@ import {
 
 export type RunAssessmentState = {
   error?: string;
-  traceUrl?: string;
 };
 
-// Triggered from the memo page — runs the full 7-agent Orchestrator
-// pipeline (5 research agents, Critic, Synthesis) and persists whatever
-// completed. Synchronous/blocking for now (no progress indicator yet —
-// that's Story 2, P1, deferred) so this is slow (~2-4 min with all 7
-// agents) but proves the real path: form -> agents -> Postgres -> UI.
+// Triggered from the memo page. Fast path only: validates and marks all 7
+// agents Queued, then schedules the actual ~2-4min Orchestrator run via
+// Next.js's after() so this returns almost immediately instead of blocking
+// the whole request — Story 2's live progress screen
+// (components/agent-progress.tsx) polls AgentProgress rows for the rest and
+// refreshes the page once every agent reaches a terminal state. This
+// replaced a single blocking action that awaited the whole run and
+// redirected on completion.
 export async function runAssessment(
   memoRunId: string,
   _prevState: RunAssessmentState,
@@ -34,62 +38,48 @@ export async function runAssessment(
     return { error: "Run not found." };
   }
 
-  const manifest = await runOrchestrator({
-    target: memoRun.target,
-    modality: memoRun.modality,
-    stage: memoRun.stage,
-    indication: memoRun.indication,
-    context: memoRun.context ?? undefined,
+  await initializeAgentProgress(
+    memoRunId,
+    AGENT_ROSTER.map((agent) => agent.key)
+  );
+
+  after(async () => {
+    const manifest = await runOrchestrator(
+      {
+        target: memoRun.target,
+        modality: memoRun.modality,
+        stage: memoRun.stage,
+        indication: memoRun.indication,
+        context: memoRun.context ?? undefined,
+      },
+      {
+        onAgentStatusChange: (agentName, status, info) =>
+          upsertAgentRunStatus(memoRunId, agentName, status, info.attempt, info.note),
+      }
+    );
+
+    if (manifest.researchOutputs.clinical) {
+      await persistClinicalResearchOutput(memoRunId, manifest.researchOutputs.clinical);
+    }
+    if (manifest.researchOutputs.competitive) {
+      await persistCompetitiveIntelligenceOutput(memoRunId, manifest.researchOutputs.competitive);
+    }
+    if (manifest.researchOutputs.commercial) {
+      await persistCommercialOpportunityOutput(memoRunId, manifest.researchOutputs.commercial);
+    }
+    if (manifest.researchOutputs.regulatory) {
+      await persistRegulatoryOutput(memoRunId, manifest.researchOutputs.regulatory);
+    }
+    if (manifest.researchOutputs.dealComparables) {
+      await persistDealComparablesOutput(memoRunId, manifest.researchOutputs.dealComparables);
+    }
+    if (manifest.criticOutput) {
+      await persistCriticOutput(memoRunId, manifest.criticOutput);
+    }
+    if (manifest.synthesisOutput) {
+      await persistSynthesisOutput(memoRunId, manifest.synthesisOutput, manifest.elapsedMs);
+    }
   });
 
-  if (manifest.researchOutputs.clinical) {
-    await persistClinicalResearchOutput(memoRunId, manifest.researchOutputs.clinical);
-  }
-  if (manifest.researchOutputs.competitive) {
-    await persistCompetitiveIntelligenceOutput(memoRunId, manifest.researchOutputs.competitive);
-  }
-  if (manifest.researchOutputs.commercial) {
-    await persistCommercialOpportunityOutput(memoRunId, manifest.researchOutputs.commercial);
-  }
-  if (manifest.researchOutputs.regulatory) {
-    await persistRegulatoryOutput(memoRunId, manifest.researchOutputs.regulatory);
-  }
-  if (manifest.researchOutputs.dealComparables) {
-    await persistDealComparablesOutput(memoRunId, manifest.researchOutputs.dealComparables);
-  }
-  if (manifest.criticOutput) {
-    await persistCriticOutput(memoRunId, manifest.criticOutput);
-  }
-  if (manifest.synthesisOutput) {
-    await persistSynthesisOutput(memoRunId, manifest.synthesisOutput, manifest.elapsedMs);
-  }
-
-  // Partial results are still useful (AGENT_PLAN.md §3: surface a partial
-  // memo, never hard-fail the whole run) — only error out if every agent
-  // that ran actually failed to produce anything.
-  const anyAgentSucceeded =
-    manifest.agentStatuses.clinical === "complete" ||
-    manifest.agentStatuses.competitive === "complete" ||
-    manifest.agentStatuses.commercial === "complete" ||
-    manifest.agentStatuses.regulatory === "complete" ||
-    manifest.agentStatuses.dealComparables === "complete";
-
-  if (!anyAgentSucceeded) {
-    const failures = [
-      `Clinical Research: ${manifest.agentStatuses.clinical} (${manifest.agentNotes.clinical ?? "no detail"})`,
-      `Competitive Intelligence: ${manifest.agentStatuses.competitive} (${manifest.agentNotes.competitive ?? "no detail"})`,
-      `Commercial Opportunity: ${manifest.agentStatuses.commercial} (${manifest.agentNotes.commercial ?? "no detail"})`,
-      `Regulatory: ${manifest.agentStatuses.regulatory} (${manifest.agentNotes.regulatory ?? "no detail"})`,
-      `Deal Comparables: ${manifest.agentStatuses.dealComparables} (${manifest.agentNotes.dealComparables ?? "no detail"})`,
-    ].join("; ");
-    return { error: failures, traceUrl: manifest.traceUrl };
-  }
-
-  revalidatePath(`/memo/${memoRunId}`);
-  // router.refresh() from the client alone was confirmed NOT to pick up
-  // fresh data in dev (Postgres had the rows both times; the page just
-  // never re-rendered) — redirect to the same path forces an actual
-  // navigation, which reliably fetches the fresh RSC payload. Same pattern
-  // createMemoRun already uses successfully.
-  redirect(`/memo/${memoRunId}`);
+  return {};
 }

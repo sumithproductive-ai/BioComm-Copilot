@@ -36,6 +36,19 @@ enum RecommendedNextStep {
   DoNotPursue
 }
 
+// Live per-agent progress for USER_STORIES.md Story 2 — deliberately only
+// these 4 values (Story 2's own vocabulary), distinct from AgentStatus
+// (complete/incomplete/failed) used for the *final* persisted result once a
+// run is done. Failed here covers both "threw" and "exhausted retries
+// without validating" — that distinction still lives in the final
+// AgentStatus bookkeeping, untouched by this table.
+enum AgentRunStatus {
+  Queued
+  Running
+  Complete
+  Failed
+}
+
 enum TrialStatus {
   Active
   Completed
@@ -97,6 +110,11 @@ model MemoRun {
   elapsedMs   Int?
   generatedAt DateTime? @db.Timestamptz(6)
 
+  // Stamped once at kickoff (Story 2) — distinct from createdAt, which is
+  // when the form was submitted and may be long before "Run Assessment" is
+  // actually clicked. Purely for the live progress screen's elapsed timer.
+  assessmentStartedAt DateTime? @db.Timestamptz(6)
+
   createdAt         DateTime @default(now()) @db.Timestamptz(6)
   langfuseSessionId String?
 
@@ -148,6 +166,7 @@ model MemoRun {
   criticFlags             CriticFlag[]
   keyRisks                KeyRisk[]
   routeRecommendations    RouteRecommendation[]
+  agentProgress           AgentProgress[]
 
   @@map("memo_run")
 }
@@ -452,4 +471,26 @@ model RouteRecommendation {
   label       ClaimLabel @default(Assumption)
 
   @@map("route_recommendation")
+}
+
+// ---------------------------------------------------------------------------
+// Live agent progress (USER_STORIES.md Story 2) — one row per (run, agent)
+// pair, upserted in place as status changes. Not a history table; the
+// Langfuse trace already has the durable per-attempt record.
+// ---------------------------------------------------------------------------
+
+model AgentProgress {
+  id        String  @id @default(uuid()) @db.Uuid
+  memoRunId String  @db.Uuid
+  memoRun   MemoRun @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+
+  agentName   String
+  status      AgentRunStatus @default(Queued)
+  attempt     Int            @default(0)
+  startedAt   DateTime?      @db.Timestamptz(6)
+  completedAt DateTime?      @db.Timestamptz(6)
+  note        String?
+
+  @@unique([memoRunId, agentName])
+  @@map("agent_progress")
 }
