@@ -10,8 +10,17 @@ import type {
   CommercialOpportunityOutput,
   RegulatoryOutput,
   DealComparablesOutput,
+  CriticOutput,
+  SynthesisOutput,
   CitationRef,
 } from "./schemas";
+
+// Story 9 AC: "If no flags were raised, the section states 'No critical
+// flags identified — standard human review still required'". This is
+// static UI copy driven by data (like ERD.md's reviewer_notes_summary
+// field), not something the Critic Agent itself generates — flags render
+// verbatim when present, so this line only ever covers the empty case.
+const NO_FLAGS_REVIEWER_NOTE = "No critical flags identified — standard human review still required.";
 
 type Tx = Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">;
 
@@ -330,6 +339,48 @@ export async function getDealComparablesLandscape(
   });
 }
 
+export async function persistCriticOutput(memoRunId: string, output: CriticOutput): Promise<void> {
+  await db.$transaction(async (tx) => {
+    await tx.memoRun.update({
+      where: { id: memoRunId },
+      data: {
+        hasCriticalFlags: output.hasCriticalFlags,
+        reviewerNotesSummary: output.flags.length === 0 ? NO_FLAGS_REVIEWER_NOTE : null,
+      },
+    });
+
+    for (const flag of output.flags) {
+      await tx.criticFlag.create({
+        data: {
+          memoRunId,
+          type: flag.type,
+          section: flag.section,
+          description: flag.description,
+        },
+      });
+    }
+  });
+}
+
+export type ReviewerNotes = Prisma.MemoRunGetPayload<{
+  select: {
+    hasCriticalFlags: true;
+    reviewerNotesSummary: true;
+    criticFlags: true;
+  };
+}>;
+
+export async function getReviewerNotes(memoRunId: string): Promise<ReviewerNotes | null> {
+  return db.memoRun.findUnique({
+    where: { id: memoRunId },
+    select: {
+      hasCriticalFlags: true,
+      reviewerNotesSummary: true,
+      criticFlags: true,
+    },
+  });
+}
+
 export type CompetitiveLandscape = Prisma.MemoRunGetPayload<{
   select: {
     approvedCompetitors: { include: { citation: true } };
@@ -371,5 +422,97 @@ export async function getClinicalLandscape(memoRunId: string): Promise<ClinicalL
       safetySignals: { include: { citation: true } },
       similarDrugFailures: { include: { citation: true } },
     },
+  });
+}
+
+// Synthesis Agent (AGENT_PLAN.md §4.8) — last agent to run, stamps
+// asOfDate/elapsedMs/generatedAt onto MemoRun (ERD.md: "Set by the
+// Synthesis Agent once a run completes") and writes the Decision Summary,
+// Key Risks, and Route Recommendations that only exist once a run is done.
+export async function persistSynthesisOutput(
+  memoRunId: string,
+  output: SynthesisOutput,
+  elapsedMs: number
+): Promise<void> {
+  await db.$transaction(async (tx) => {
+    await tx.memoRun.update({
+      where: { id: memoRunId },
+      data: {
+        asOfDate: new Date(output.asOfDate),
+        elapsedMs,
+        generatedAt: new Date(),
+      },
+    });
+
+    const { decisionSummary } = output;
+    await tx.decisionSummary.upsert({
+      where: { memoRunId },
+      create: { memoRunId, ...decisionSummary },
+      update: { ...decisionSummary },
+    });
+
+    for (const risk of output.keyRisks) {
+      const citation = risk.citation ? await createCitation(tx, memoRunId, risk.citation) : null;
+      await tx.keyRisk.create({
+        data: {
+          memoRunId,
+          citationId: citation?.id,
+          description: risk.description,
+          label: risk.label,
+        },
+      });
+    }
+
+    for (const recommendation of output.routeRecommendations) {
+      await tx.routeRecommendation.create({
+        data: {
+          memoRunId,
+          description: recommendation.description,
+          label: recommendation.label,
+        },
+      });
+    }
+  });
+}
+
+export type DecisionSummaryRecord = Prisma.MemoRunGetPayload<{
+  select: { asOfDate: true; elapsedMs: true; generatedAt: true; decisionSummary: true };
+}>;
+
+export async function getDecisionSummary(memoRunId: string): Promise<DecisionSummaryRecord | null> {
+  return db.memoRun.findUnique({
+    where: { id: memoRunId },
+    select: { asOfDate: true, elapsedMs: true, generatedAt: true, decisionSummary: true },
+  });
+}
+
+export type KeyRisksAndRecommendations = Prisma.MemoRunGetPayload<{
+  select: {
+    keyRisks: { include: { citation: true } };
+    routeRecommendations: true;
+  };
+}>;
+
+export async function getKeyRisksAndRecommendations(
+  memoRunId: string
+): Promise<KeyRisksAndRecommendations | null> {
+  return db.memoRun.findUnique({
+    where: { id: memoRunId },
+    select: {
+      keyRisks: { include: { citation: true } },
+      routeRecommendations: true,
+    },
+  });
+}
+
+// Source Index (PRODUCT_BRIEF.md memo section 10) — every citation
+// recorded for this run, across every agent, in one place with access
+// dates. Every persist* function above creates its citations through the
+// shared createCitation helper against this same memoRunId, so a plain
+// findMany is the complete index — no per-agent aggregation needed.
+export async function getSourceIndex(memoRunId: string) {
+  return db.citation.findMany({
+    where: { memoRunId },
+    orderBy: { accessedDate: "desc" },
   });
 }

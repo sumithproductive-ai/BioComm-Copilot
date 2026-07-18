@@ -10,6 +10,8 @@ import {
   persistCommercialOpportunityOutput,
   persistRegulatoryOutput,
   persistDealComparablesOutput,
+  persistCriticOutput,
+  persistSynthesisOutput,
 } from "@/lib/agents/persist";
 
 export type RunAssessmentState = {
@@ -17,12 +19,11 @@ export type RunAssessmentState = {
   traceUrl?: string;
 };
 
-// Triggered from the memo page — runs the Orchestrator (Clinical Research +
-// Competitive Intelligence so far; more research agents join this dispatch
-// as they're built) and persists whatever completed. Synchronous/blocking
-// for now (no progress indicator yet — that's Story 2, P1, deferred) so
-// this is slow (~60-120s) but proves the real path: form -> agents ->
-// Postgres -> UI.
+// Triggered from the memo page — runs the full 7-agent Orchestrator
+// pipeline (5 research agents, Critic, Synthesis) and persists whatever
+// completed. Synchronous/blocking for now (no progress indicator yet —
+// that's Story 2, P1, deferred) so this is slow (~2-4 min with all 7
+// agents) but proves the real path: form -> agents -> Postgres -> UI.
 export async function runAssessment(
   memoRunId: string,
   _prevState: RunAssessmentState,
@@ -55,6 +56,12 @@ export async function runAssessment(
   }
   if (manifest.researchOutputs.dealComparables) {
     await persistDealComparablesOutput(memoRunId, manifest.researchOutputs.dealComparables);
+  }
+  if (manifest.criticOutput) {
+    await persistCriticOutput(memoRunId, manifest.criticOutput);
+  }
+  if (manifest.synthesisOutput) {
+    await persistSynthesisOutput(memoRunId, manifest.synthesisOutput, manifest.elapsedMs);
   }
 
   // Partial results are still useful (AGENT_PLAN.md §3: surface a partial

@@ -1,9 +1,8 @@
 // Orchestrator — AGENT_PLAN.md §4.1. Top-level coordinator; never touches
-// sources directly. All 5 research agents are now built: Clinical Research,
-// Competitive Intelligence, Commercial Opportunity, Regulatory, and Deal
-// Comparables. Critic and Synthesis (AGENT_PLAN.md §4.7-4.8) are the two
-// remaining agents in the overall build order — this manifest's shape
-// already anticipates them but doesn't invoke them yet.
+// sources directly. All 5 research agents, Critic, and Synthesis are now
+// built — this is the full 7-agent pipeline from AGENT_PLAN.md §4. Critic
+// runs after the 5 research agents settle; Synthesis runs last of all,
+// after Critic, since it compiles Critic's flags into Key Risks too.
 
 import { randomUUID } from "node:crypto";
 import type { LangfuseSpanClient } from "langfuse";
@@ -18,7 +17,14 @@ import {
 } from "./commercial-opportunity";
 import { runRegulatoryAgent, type RegulatoryInput } from "./regulatory";
 import { runDealComparablesAgent, type DealComparablesInput } from "./deal-comparables";
-import type { CompetitiveIntelligenceOutput, ResearchOutputs } from "./schemas";
+import { runCriticAgent, type CriticInput } from "./critic";
+import { runSynthesisAgent, type SynthesisInput } from "./synthesis";
+import type {
+  CompetitiveIntelligenceOutput,
+  CriticOutput,
+  ResearchOutputs,
+  SynthesisOutput,
+} from "./schemas";
 import { langfuse, isLangfuseConfigured } from "./observability";
 
 export type OrchestratorInput = {
@@ -37,6 +43,12 @@ export type RunManifest = {
   agentNotes: Partial<Record<keyof ResearchOutputs, string>>;
   elapsedMs: number;
   researchOutputs: ResearchOutputs;
+  criticStatus: AgentStatus;
+  criticNote?: string;
+  criticOutput: CriticOutput | null;
+  synthesisStatus: AgentStatus;
+  synthesisNote?: string;
+  synthesisOutput: SynthesisOutput | null;
   traceUrl?: string;
 };
 
@@ -224,8 +236,42 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
     agentNotes.dealComparables = `Unexpected rejection: ${String(dealComparablesResult.reason)}`;
   }
 
+  // Critic runs after all 5 research agents settle, not concurrently with
+  // them — AGENT_PLAN.md §4.7: it reviews the completed outputs, it doesn't
+  // race them. Runs even if some research agents failed (null sections);
+  // runCriticAgent explicitly skips checks against null sections.
+  const criticInput: CriticInput = {
+    target: input.target,
+    modality: input.modality,
+    indication: input.indication,
+    researchOutputs,
+  };
+  const criticRunResult = await runWithRetries(runTrace, "critic", (span) =>
+    runCriticAgent(criticInput, span)
+  );
+  const criticStatus = criticRunResult.status;
+  const criticOutput = criticRunResult.output;
+  const criticNote = criticRunResult.note;
+
+  // Synthesis runs last of all — it compiles Critic's flags into Key Risks,
+  // so it needs Critic to have already run (AGENT_PLAN.md §4.7's rationale
+  // for keeping the two agents separate and sequential).
+  const synthesisInput: SynthesisInput = {
+    target: input.target,
+    modality: input.modality,
+    indication: input.indication,
+    researchOutputs,
+    criticOutput,
+  };
+  const synthesisRunResult = await runWithRetries(runTrace, "synthesis", (span) =>
+    runSynthesisAgent(synthesisInput, span)
+  );
+  const synthesisStatus = synthesisRunResult.status;
+  const synthesisOutput = synthesisRunResult.output;
+  const synthesisNote = synthesisRunResult.note;
+
   const elapsedMs = Date.now() - start;
-  runTrace?.update({ output: { agentStatuses, elapsedMs } });
+  runTrace?.update({ output: { agentStatuses, criticStatus, synthesisStatus, elapsedMs } });
 
   // Serverless/short-lived processes can exit before Langfuse's internal
   // batch timer fires — flush explicitly so the trace is actually sent.
@@ -237,6 +283,12 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
     agentNotes,
     elapsedMs,
     researchOutputs,
+    criticStatus,
+    criticNote,
+    criticOutput,
+    synthesisStatus,
+    synthesisNote,
+    synthesisOutput,
     traceUrl: runTrace?.getTraceUrl(),
   };
 }
