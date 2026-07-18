@@ -4,6 +4,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import type { LangfuseSpanClient } from "langfuse";
 import { clinicalResearchOutputSchema, type ClinicalResearchOutput } from "./schemas";
 import { clinicalTrialsToolDefinition, searchClinicalTrials } from "./tools/clinicaltrials";
 import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
@@ -87,7 +88,8 @@ function backfillEmptyArrayFields(input: unknown): unknown {
 }
 
 export async function runClinicalResearchAgent(
-  input: ClinicalResearchInput
+  input: ClinicalResearchInput,
+  parentSpan?: LangfuseSpanClient
 ): Promise<ClinicalResearchOutput> {
   const today = new Date().toISOString().slice(0, 10);
 
@@ -109,6 +111,12 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const isLastChance = i === MAX_ITERATIONS - 1;
 
+    const generation = parentSpan?.generation({
+      name: `clinical-research-llm-call-${i}`,
+      model: MODEL,
+      input: messages,
+    });
+
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 4096,
@@ -120,6 +128,15 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
         ? { type: "tool", name: "submit_findings" }
         : { type: "auto" },
       messages,
+    });
+
+    generation?.end({
+      output: response.content,
+      usage: {
+        input: response.usage.input_tokens,
+        output: response.usage.output_tokens,
+        unit: "TOKENS",
+      },
     });
 
     messages.push({ role: "assistant", content: response.content });
@@ -146,10 +163,12 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
 
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of toolUseBlocks) {
+      const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
       if (block.name === "search_clinical_trials") {
         const result = await searchClinicalTrials(
           block.input as { query: string; condition?: string; pageSize?: number }
         );
+        toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",
           tool_use_id: block.id,
@@ -159,6 +178,7 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
         const result = await searchPubmed(
           block.input as { query: string; maxResults?: number }
         );
+        toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",
           tool_use_id: block.id,
