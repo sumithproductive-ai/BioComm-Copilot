@@ -1,5 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { TherapyProfileForm } from "@/components/therapy-profile-form";
+import { RecentRunsList } from "@/components/recent-runs-list";
 
 export default function Home() {
   return (
@@ -21,6 +22,8 @@ export default function Home() {
             <TherapyProfileForm />
           </CardContent>
         </Card>
+
+        <RecentRunsList />
       </div>
     </div>
   );

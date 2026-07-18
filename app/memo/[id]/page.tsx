@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
+import { RecordRecentRun } from "@/components/record-recent-run";
 
 export default async function MemoRunPage({
   params,
@@ -17,6 +18,16 @@ export default async function MemoRunPage({
   return (
     <div className="flex flex-1 justify-center bg-background px-6 py-16">
       <div className="w-full max-w-xl">
+        <RecordRecentRun
+          run={{
+            id: memoRun.id,
+            target: memoRun.target,
+            modality: memoRun.modality,
+            stage: memoRun.stage,
+            indication: memoRun.indication,
+            createdAt: memoRun.createdAt.toISOString(),
+          }}
+        />
         <p className="text-xs font-bold tracking-wide text-brand-amber uppercase">
           Assessment queued
         </p>
