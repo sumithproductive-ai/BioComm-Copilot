@@ -1,9 +1,9 @@
 // Orchestrator — AGENT_PLAN.md §4.1. Top-level coordinator; never touches
-// sources directly. Clinical Research, Competitive Intelligence, and
-// Commercial Opportunity exist so far — the other 2 research agent slots
-// are wired for when they're built (build order: Regulatory, then Deal
-// Comparables), each reported as "incomplete" with a clear reason until
-// then rather than silently absent from the manifest.
+// sources directly. Clinical Research, Competitive Intelligence, Commercial
+// Opportunity, and Regulatory exist so far — the last research agent slot
+// (Deal Comparables) is wired for when it's built, reported as "incomplete"
+// with a clear reason until then rather than silently absent from the
+// manifest.
 
 import { randomUUID } from "node:crypto";
 import type { LangfuseSpanClient } from "langfuse";
@@ -16,6 +16,7 @@ import {
   runCommercialOpportunityAgent,
   type CommercialOpportunityInput,
 } from "./commercial-opportunity";
+import { runRegulatoryAgent, type RegulatoryInput } from "./regulatory";
 import type { CompetitiveIntelligenceOutput, ResearchOutputs } from "./schemas";
 import { langfuse, isLangfuseConfigured } from "./observability";
 
@@ -120,6 +121,12 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
     modality: input.modality,
     indication: input.indication,
   };
+  const regulatoryInput: RegulatoryInput = {
+    target: input.target,
+    modality: input.modality,
+    stage: input.stage,
+    indication: input.indication,
+  };
 
   // Dispatch every research agent concurrently — Promise.allSettled so one
   // slow/failed agent never blocks the others (AGENT_PLAN.md §3's explicit
@@ -139,25 +146,26 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
   const competitiveOutputOnlyPromise: Promise<CompetitiveIntelligenceOutput | null> =
     competitivePromise.then((r) => r.output);
 
-  const [clinicalResult, competitiveResult, commercialResult] = await Promise.allSettled([
-    runWithRetries(runTrace, "clinical", (span) => runClinicalResearchAgent(clinicalInput, span)),
-    competitivePromise,
-    runWithRetries(runTrace, "commercial", (span) =>
-      runCommercialOpportunityAgent(commercialInput, span, competitiveOutputOnlyPromise)
-    ),
-  ]);
+  const [clinicalResult, competitiveResult, commercialResult, regulatoryResult] =
+    await Promise.allSettled([
+      runWithRetries(runTrace, "clinical", (span) => runClinicalResearchAgent(clinicalInput, span)),
+      competitivePromise,
+      runWithRetries(runTrace, "commercial", (span) =>
+        runCommercialOpportunityAgent(commercialInput, span, competitiveOutputOnlyPromise)
+      ),
+      runWithRetries(runTrace, "regulatory", (span) => runRegulatoryAgent(regulatoryInput, span)),
+    ]);
 
   const agentStatuses = {
     clinical: "failed",
     competitive: "failed",
     commercial: "failed",
     dealComparables: "incomplete",
-    regulatory: "incomplete",
+    regulatory: "failed",
   } as Record<keyof ResearchOutputs, AgentStatus>;
 
   const agentNotes: Partial<Record<keyof ResearchOutputs, string>> = {
     dealComparables: "Agent not yet built",
-    regulatory: "Agent not yet built",
   };
 
   const researchOutputs: ResearchOutputs = {
@@ -190,6 +198,14 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
     if (commercialResult.value.note) agentNotes.commercial = commercialResult.value.note;
   } else {
     agentNotes.commercial = `Unexpected rejection: ${String(commercialResult.reason)}`;
+  }
+
+  if (regulatoryResult.status === "fulfilled") {
+    agentStatuses.regulatory = regulatoryResult.value.status;
+    researchOutputs.regulatory = regulatoryResult.value.output;
+    if (regulatoryResult.value.note) agentNotes.regulatory = regulatoryResult.value.note;
+  } else {
+    agentNotes.regulatory = `Unexpected rejection: ${String(regulatoryResult.reason)}`;
   }
 
   const elapsedMs = Date.now() - start;
