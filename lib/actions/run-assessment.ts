@@ -7,6 +7,7 @@ import { runOrchestrator } from "@/lib/agents/orchestrator";
 import {
   persistClinicalResearchOutput,
   persistCompetitiveIntelligenceOutput,
+  persistCommercialOpportunityOutput,
 } from "@/lib/agents/persist";
 
 export type RunAssessmentState = {
@@ -44,18 +45,23 @@ export async function runAssessment(
   if (manifest.researchOutputs.competitive) {
     await persistCompetitiveIntelligenceOutput(memoRunId, manifest.researchOutputs.competitive);
   }
+  if (manifest.researchOutputs.commercial) {
+    await persistCommercialOpportunityOutput(memoRunId, manifest.researchOutputs.commercial);
+  }
 
   // Partial results are still useful (AGENT_PLAN.md §3: surface a partial
   // memo, never hard-fail the whole run) — only error out if every agent
   // that ran actually failed to produce anything.
   const anyAgentSucceeded =
     manifest.agentStatuses.clinical === "complete" ||
-    manifest.agentStatuses.competitive === "complete";
+    manifest.agentStatuses.competitive === "complete" ||
+    manifest.agentStatuses.commercial === "complete";
 
   if (!anyAgentSucceeded) {
     const failures = [
       `Clinical Research: ${manifest.agentStatuses.clinical} (${manifest.agentNotes.clinical ?? "no detail"})`,
       `Competitive Intelligence: ${manifest.agentStatuses.competitive} (${manifest.agentNotes.competitive ?? "no detail"})`,
+      `Commercial Opportunity: ${manifest.agentStatuses.commercial} (${manifest.agentNotes.commercial ?? "no detail"})`,
     ].join("; ");
     return { error: failures, traceUrl: manifest.traceUrl };
   }

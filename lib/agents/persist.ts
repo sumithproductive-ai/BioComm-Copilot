@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import type {
   ClinicalResearchOutput,
   CompetitiveIntelligenceOutput,
+  CommercialOpportunityOutput,
   CitationRef,
 } from "./schemas";
 
@@ -137,6 +138,69 @@ export async function persistCompetitiveIntelligenceOutput(
         },
       });
     }
+  });
+}
+
+export async function persistCommercialOpportunityOutput(
+  memoRunId: string,
+  output: CommercialOpportunityOutput
+): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const patientPopulationCitation = output.patientPopulationEstimate.citation
+      ? await createCitation(tx, memoRunId, output.patientPopulationEstimate.citation)
+      : null;
+
+    await tx.memoRun.update({
+      where: { id: memoRunId },
+      data: {
+        patientPopulationValue: output.patientPopulationEstimate.value,
+        patientPopulationLabel: output.patientPopulationEstimate.label,
+        patientPopulationCitationId: patientPopulationCitation?.id,
+        unmetNeedSummary: output.unmetNeed.summary,
+        marketCrowdingSummary: output.marketCrowdingAssessment.summary,
+        marketCrowdingConsistent: output.marketCrowdingAssessment.consistentWithCompetitiveLandscape,
+        differentiationSummary: output.differentiationPotential.summary,
+        differentiationLabel: output.differentiationPotential.label,
+      },
+    });
+
+    for (const citationRef of output.unmetNeed.citations) {
+      const citation = await createCitation(tx, memoRunId, citationRef);
+      await tx.unmetNeedCitation.create({
+        data: { memoRunId, citationId: citation.id },
+      });
+    }
+  });
+}
+
+export type CommercialOpportunity = Prisma.MemoRunGetPayload<{
+  select: {
+    patientPopulationValue: true;
+    patientPopulationLabel: true;
+    patientPopulationCitation: true;
+    unmetNeedSummary: true;
+    unmetNeedCitations: { include: { citation: true } };
+    marketCrowdingSummary: true;
+    marketCrowdingConsistent: true;
+    differentiationSummary: true;
+    differentiationLabel: true;
+  };
+}>;
+
+export async function getCommercialOpportunity(memoRunId: string): Promise<CommercialOpportunity | null> {
+  return db.memoRun.findUnique({
+    where: { id: memoRunId },
+    select: {
+      patientPopulationValue: true,
+      patientPopulationLabel: true,
+      patientPopulationCitation: true,
+      unmetNeedSummary: true,
+      unmetNeedCitations: { include: { citation: true } },
+      marketCrowdingSummary: true,
+      marketCrowdingConsistent: true,
+      differentiationSummary: true,
+      differentiationLabel: true,
+    },
   });
 }
 
