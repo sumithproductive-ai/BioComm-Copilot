@@ -5,6 +5,7 @@ import {
   getCompetitiveLandscape,
   getCommercialOpportunity,
   getRegulatoryLandscape,
+  getDealComparablesLandscape,
 } from "@/lib/agents/persist";
 import { Card, CardContent } from "@/components/ui/card";
 import { RecordRecentRun } from "@/components/record-recent-run";
@@ -13,6 +14,7 @@ import { ClinicalLandscapeSection } from "@/components/clinical-landscape";
 import { CompetitiveLandscapeSection } from "@/components/competitive-landscape";
 import { CommercialOpportunitySection } from "@/components/commercial-opportunity";
 import { RegulatoryLandscapeSection } from "@/components/regulatory-landscape";
+import { DealComparablesSection } from "@/components/deal-comparables";
 
 export default async function MemoRunPage({
   params,
@@ -26,13 +28,19 @@ export default async function MemoRunPage({
     notFound();
   }
 
-  const [clinicalLandscape, competitiveLandscape, commercialOpportunity, regulatoryLandscape] =
-    await Promise.all([
-      getClinicalLandscape(id),
-      getCompetitiveLandscape(id),
-      getCommercialOpportunity(id),
-      getRegulatoryLandscape(id),
-    ]);
+  const [
+    clinicalLandscape,
+    competitiveLandscape,
+    commercialOpportunity,
+    regulatoryLandscape,
+    dealComparablesLandscape,
+  ] = await Promise.all([
+    getClinicalLandscape(id),
+    getCompetitiveLandscape(id),
+    getCommercialOpportunity(id),
+    getRegulatoryLandscape(id),
+    getDealComparablesLandscape(id),
+  ]);
 
   const hasClinicalResearch =
     !!clinicalLandscape &&
@@ -54,8 +62,15 @@ export default async function MemoRunPage({
       regulatoryLandscape.guidanceDocuments.length > 0 ||
       regulatoryLandscape.priorApprovals.length > 0 ||
       regulatoryLandscape.endpointPrecedents.length > 0);
+  const hasDealComparables =
+    !!dealComparablesLandscape &&
+    (dealComparablesLandscape.noCompFound || dealComparablesLandscape.comparableDeals.length > 0);
   const hasAnyResults =
-    hasClinicalResearch || hasCompetitiveIntelligence || hasCommercialOpportunity || hasRegulatory;
+    hasClinicalResearch ||
+    hasCompetitiveIntelligence ||
+    hasCommercialOpportunity ||
+    hasRegulatory ||
+    hasDealComparables;
 
   return (
     <div className="flex flex-1 justify-center bg-background px-6 py-16">
@@ -88,12 +103,12 @@ export default async function MemoRunPage({
             {!hasAnyResults && (
               <>
                 <p className="text-sm text-muted-foreground">
-                  Clinical Research, Competitive Intelligence, Commercial
-                  Opportunity, and Regulatory agents are wired up so far —
-                  Deal Comparables, Critic, and Synthesis aren&apos;t built
-                  yet. This runs four real agents concurrently against live
-                  ClinicalTrials.gov, PubMed, and web search data, not a
-                  demo.
+                  All 5 research agents are wired up — Clinical Research,
+                  Competitive Intelligence, Commercial Opportunity,
+                  Regulatory, and Deal Comparables. Critic and Synthesis
+                  aren&apos;t built yet. This runs five real agents
+                  concurrently against live ClinicalTrials.gov, PubMed, and
+                  web search data, not a demo.
                 </p>
                 <RunAssessmentButton memoRunId={memoRun.id} />
               </>
@@ -141,6 +156,17 @@ export default async function MemoRunPage({
                 Regulatory Landscape
               </h2>
               <RegulatoryLandscapeSection data={regulatoryLandscape} />
+            </CardContent>
+          </Card>
+        )}
+
+        {hasDealComparables && dealComparablesLandscape && (
+          <Card className="mt-6 [--card-spacing:1.75rem] rounded-2xl border border-border shadow-[0_1px_2px_rgba(15,31,61,0.04),0_12px_32px_-20px_rgba(15,31,61,0.18)]">
+            <CardContent>
+              <h2 className="mb-4 text-[19px] font-bold text-brand-navy">
+                Deal Comparables
+              </h2>
+              <DealComparablesSection data={dealComparablesLandscape} />
             </CardContent>
           </Card>
         )}

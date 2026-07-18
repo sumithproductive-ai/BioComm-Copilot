@@ -9,6 +9,7 @@ import {
   persistCompetitiveIntelligenceOutput,
   persistCommercialOpportunityOutput,
   persistRegulatoryOutput,
+  persistDealComparablesOutput,
 } from "@/lib/agents/persist";
 
 export type RunAssessmentState = {
@@ -52,6 +53,9 @@ export async function runAssessment(
   if (manifest.researchOutputs.regulatory) {
     await persistRegulatoryOutput(memoRunId, manifest.researchOutputs.regulatory);
   }
+  if (manifest.researchOutputs.dealComparables) {
+    await persistDealComparablesOutput(memoRunId, manifest.researchOutputs.dealComparables);
+  }
 
   // Partial results are still useful (AGENT_PLAN.md §3: surface a partial
   // memo, never hard-fail the whole run) — only error out if every agent
@@ -60,7 +64,8 @@ export async function runAssessment(
     manifest.agentStatuses.clinical === "complete" ||
     manifest.agentStatuses.competitive === "complete" ||
     manifest.agentStatuses.commercial === "complete" ||
-    manifest.agentStatuses.regulatory === "complete";
+    manifest.agentStatuses.regulatory === "complete" ||
+    manifest.agentStatuses.dealComparables === "complete";
 
   if (!anyAgentSucceeded) {
     const failures = [
@@ -68,6 +73,7 @@ export async function runAssessment(
       `Competitive Intelligence: ${manifest.agentStatuses.competitive} (${manifest.agentNotes.competitive ?? "no detail"})`,
       `Commercial Opportunity: ${manifest.agentStatuses.commercial} (${manifest.agentNotes.commercial ?? "no detail"})`,
       `Regulatory: ${manifest.agentStatuses.regulatory} (${manifest.agentNotes.regulatory ?? "no detail"})`,
+      `Deal Comparables: ${manifest.agentStatuses.dealComparables} (${manifest.agentNotes.dealComparables ?? "no detail"})`,
     ].join("; ");
     return { error: failures, traceUrl: manifest.traceUrl };
   }

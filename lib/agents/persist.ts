@@ -9,6 +9,7 @@ import type {
   CompetitiveIntelligenceOutput,
   CommercialOpportunityOutput,
   RegulatoryOutput,
+  DealComparablesOutput,
   CitationRef,
 } from "./schemas";
 
@@ -273,6 +274,58 @@ export async function getRegulatoryLandscape(memoRunId: string): Promise<Regulat
       guidanceDocuments: true,
       priorApprovals: { include: { citation: true } },
       endpointPrecedents: { include: { citations: { include: { citation: true } } } },
+    },
+  });
+}
+
+export async function persistDealComparablesOutput(
+  memoRunId: string,
+  output: DealComparablesOutput
+): Promise<void> {
+  await db.$transaction(async (tx) => {
+    await tx.memoRun.update({
+      where: { id: memoRunId },
+      data: {
+        noCompFound: output.noCompFound,
+        noCompExplanation: output.noCompExplanation,
+      },
+    });
+
+    for (const deal of output.comparableDeals) {
+      const citation = await createCitation(tx, memoRunId, deal.citation);
+      await tx.comparableDeal.create({
+        data: {
+          memoRunId,
+          citationId: citation.id,
+          asset: deal.asset,
+          company: deal.company,
+          stageAtDeal: deal.stageAtDeal,
+          dealType: deal.dealType,
+          disclosedTerms: deal.disclosedTerms,
+          compStrength: deal.compStrength,
+        },
+      });
+    }
+  });
+}
+
+export type DealComparablesLandscape = Prisma.MemoRunGetPayload<{
+  select: {
+    noCompFound: true;
+    noCompExplanation: true;
+    comparableDeals: { include: { citation: true } };
+  };
+}>;
+
+export async function getDealComparablesLandscape(
+  memoRunId: string
+): Promise<DealComparablesLandscape | null> {
+  return db.memoRun.findUnique({
+    where: { id: memoRunId },
+    select: {
+      noCompFound: true,
+      noCompExplanation: true,
+      comparableDeals: { include: { citation: true } },
     },
   });
 }
