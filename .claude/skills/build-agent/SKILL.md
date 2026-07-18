@@ -67,6 +67,46 @@ validated, typed data; a separate persistence step (built once, shared by
 all agents) maps that onto `schema.prisma` tables. Keeps agents testable in
 isolation without a database.
 
+## Lessons from Clinical Research Agent — apply these up front, don't rediscover them
+
+Building the first agent took 4 real API runs to get right. All 4 failure
+modes are generic to every agent built this way, not Clinical-specific —
+build these in from the start instead of hitting them again per agent:
+
+1. **The model will send a nested object field as a flattened string**
+   (e.g. `mechanismOfAction` as a string instead of `{ summary, label,
+   citations }`), even though the tool's JSON Schema says otherwise. Fix:
+   put one concrete example of a correctly-shaped `submit_findings` call in
+   the system prompt. A JSON Schema alone under-specifies nested shape
+   compliance; a worked example fixes it reliably.
+2. **The model omits top-level array fields it found nothing for**, rather
+   than sending `[]` — confirmed this doesn't get fixed by explicit prompt
+   instructions ("always include every field") or a worked example either.
+   Fix at the parsing layer, not the prompt: backfill known-safe missing
+   array fields to `[]` before `schema.parse()`. Only do this for fields
+   where "omitted" and "explicitly empty" carry the same meaning (a missing
+   list of findings) — never backfill a field where omission could hide a
+   real gap (a missing `label`, a missing `citation`).
+3. **`web_search` needs `allowed_callers: ["direct"]`.** Without it, the
+   model can route the call through a code-execution path that requires
+   `container_id` session management and fails with a 400 otherwise.
+4. **Public APIs used as tools (ClinicalTrials.gov, PubMed, SEC EDGAR) need
+   retry-with-backoff from the first version, not added after a failure.**
+   Use the shared `lib/agents/tools/fetch-with-retry.ts` for every fetch in
+   every tool wrapper — PubMed's E-utilities rate-limited the very first
+   real run. Also normalize whatever date granularity the API actually
+   returns (ClinicalTrials.gov gives month-only dates) against the schema's
+   `z.iso.date()` expectation — confirm real field shapes against a live
+   API response before writing the parser, don't guess from docs.
+
+**Observability is not optional per-agent wiring — it's a parameter.**
+Every agent function takes an optional `parentSpan?: LangfuseSpanClient`
+(from `lib/agents/observability.ts`) as its second argument, wraps each
+LLM call in `parentSpan?.generation({...})` / `.end({...})`, and each tool
+execution in `parentSpan?.span({...})` / `.end({...})`. The Orchestrator
+creates the actual trace and per-attempt span and passes it down — an
+agent never creates its own root trace.
+
 ## Definition of done (AGENT_PLAN.md §8 — not a vibe check)
 
 An agent isn't done until all four are true:
