@@ -1,9 +1,9 @@
 // Orchestrator — AGENT_PLAN.md §4.1. Top-level coordinator; never touches
-// sources directly. Clinical Research, Competitive Intelligence, Commercial
-// Opportunity, and Regulatory exist so far — the last research agent slot
-// (Deal Comparables) is wired for when it's built, reported as "incomplete"
-// with a clear reason until then rather than silently absent from the
-// manifest.
+// sources directly. All 5 research agents are now built: Clinical Research,
+// Competitive Intelligence, Commercial Opportunity, Regulatory, and Deal
+// Comparables. Critic and Synthesis (AGENT_PLAN.md §4.7-4.8) are the two
+// remaining agents in the overall build order — this manifest's shape
+// already anticipates them but doesn't invoke them yet.
 
 import { randomUUID } from "node:crypto";
 import type { LangfuseSpanClient } from "langfuse";
@@ -17,6 +17,7 @@ import {
   type CommercialOpportunityInput,
 } from "./commercial-opportunity";
 import { runRegulatoryAgent, type RegulatoryInput } from "./regulatory";
+import { runDealComparablesAgent, type DealComparablesInput } from "./deal-comparables";
 import type { CompetitiveIntelligenceOutput, ResearchOutputs } from "./schemas";
 import { langfuse, isLangfuseConfigured } from "./observability";
 
@@ -127,6 +128,12 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
     stage: input.stage,
     indication: input.indication,
   };
+  const dealComparablesInput: DealComparablesInput = {
+    target: input.target,
+    modality: input.modality,
+    stage: input.stage,
+    indication: input.indication,
+  };
 
   // Dispatch every research agent concurrently — Promise.allSettled so one
   // slow/failed agent never blocks the others (AGENT_PLAN.md §3's explicit
@@ -146,7 +153,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
   const competitiveOutputOnlyPromise: Promise<CompetitiveIntelligenceOutput | null> =
     competitivePromise.then((r) => r.output);
 
-  const [clinicalResult, competitiveResult, commercialResult, regulatoryResult] =
+  const [clinicalResult, competitiveResult, commercialResult, regulatoryResult, dealComparablesResult] =
     await Promise.allSettled([
       runWithRetries(runTrace, "clinical", (span) => runClinicalResearchAgent(clinicalInput, span)),
       competitivePromise,
@@ -154,19 +161,20 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
         runCommercialOpportunityAgent(commercialInput, span, competitiveOutputOnlyPromise)
       ),
       runWithRetries(runTrace, "regulatory", (span) => runRegulatoryAgent(regulatoryInput, span)),
+      runWithRetries(runTrace, "dealComparables", (span) =>
+        runDealComparablesAgent(dealComparablesInput, span)
+      ),
     ]);
 
   const agentStatuses = {
     clinical: "failed",
     competitive: "failed",
     commercial: "failed",
-    dealComparables: "incomplete",
+    dealComparables: "failed",
     regulatory: "failed",
   } as Record<keyof ResearchOutputs, AgentStatus>;
 
-  const agentNotes: Partial<Record<keyof ResearchOutputs, string>> = {
-    dealComparables: "Agent not yet built",
-  };
+  const agentNotes: Partial<Record<keyof ResearchOutputs, string>> = {};
 
   const researchOutputs: ResearchOutputs = {
     clinical: null,
@@ -206,6 +214,14 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<RunMani
     if (regulatoryResult.value.note) agentNotes.regulatory = regulatoryResult.value.note;
   } else {
     agentNotes.regulatory = `Unexpected rejection: ${String(regulatoryResult.reason)}`;
+  }
+
+  if (dealComparablesResult.status === "fulfilled") {
+    agentStatuses.dealComparables = dealComparablesResult.value.status;
+    researchOutputs.dealComparables = dealComparablesResult.value.output;
+    if (dealComparablesResult.value.note) agentNotes.dealComparables = dealComparablesResult.value.note;
+  } else {
+    agentNotes.dealComparables = `Unexpected rejection: ${String(dealComparablesResult.reason)}`;
   }
 
   const elapsedMs = Date.now() - start;
