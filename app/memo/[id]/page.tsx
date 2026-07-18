@@ -4,6 +4,7 @@ import {
   getClinicalLandscape,
   getCompetitiveLandscape,
   getCommercialOpportunity,
+  getRegulatoryLandscape,
 } from "@/lib/agents/persist";
 import { Card, CardContent } from "@/components/ui/card";
 import { RecordRecentRun } from "@/components/record-recent-run";
@@ -11,6 +12,7 @@ import { RunAssessmentButton } from "@/components/run-assessment-button";
 import { ClinicalLandscapeSection } from "@/components/clinical-landscape";
 import { CompetitiveLandscapeSection } from "@/components/competitive-landscape";
 import { CommercialOpportunitySection } from "@/components/commercial-opportunity";
+import { RegulatoryLandscapeSection } from "@/components/regulatory-landscape";
 
 export default async function MemoRunPage({
   params,
@@ -24,11 +26,13 @@ export default async function MemoRunPage({
     notFound();
   }
 
-  const [clinicalLandscape, competitiveLandscape, commercialOpportunity] = await Promise.all([
-    getClinicalLandscape(id),
-    getCompetitiveLandscape(id),
-    getCommercialOpportunity(id),
-  ]);
+  const [clinicalLandscape, competitiveLandscape, commercialOpportunity, regulatoryLandscape] =
+    await Promise.all([
+      getClinicalLandscape(id),
+      getCompetitiveLandscape(id),
+      getCommercialOpportunity(id),
+      getRegulatoryLandscape(id),
+    ]);
 
   const hasClinicalResearch =
     !!clinicalLandscape &&
@@ -44,7 +48,14 @@ export default async function MemoRunPage({
       !!commercialOpportunity.unmetNeedSummary ||
       !!commercialOpportunity.marketCrowdingSummary ||
       !!commercialOpportunity.differentiationSummary);
-  const hasAnyResults = hasClinicalResearch || hasCompetitiveIntelligence || hasCommercialOpportunity;
+  const hasRegulatory =
+    !!regulatoryLandscape &&
+    (!!regulatoryLandscape.developmentTimelineSummary ||
+      regulatoryLandscape.guidanceDocuments.length > 0 ||
+      regulatoryLandscape.priorApprovals.length > 0 ||
+      regulatoryLandscape.endpointPrecedents.length > 0);
+  const hasAnyResults =
+    hasClinicalResearch || hasCompetitiveIntelligence || hasCommercialOpportunity || hasRegulatory;
 
   return (
     <div className="flex flex-1 justify-center bg-background px-6 py-16">
@@ -77,10 +88,10 @@ export default async function MemoRunPage({
             {!hasAnyResults && (
               <>
                 <p className="text-sm text-muted-foreground">
-                  Clinical Research, Competitive Intelligence, and Commercial
-                  Opportunity agents are wired up so far — Deal Comparables,
-                  Regulatory, Critic, and Synthesis aren&apos;t built yet.
-                  This runs three real agents concurrently against live
+                  Clinical Research, Competitive Intelligence, Commercial
+                  Opportunity, and Regulatory agents are wired up so far —
+                  Deal Comparables, Critic, and Synthesis aren&apos;t built
+                  yet. This runs four real agents concurrently against live
                   ClinicalTrials.gov, PubMed, and web search data, not a
                   demo.
                 </p>
@@ -119,6 +130,17 @@ export default async function MemoRunPage({
                 Commercial Opportunity
               </h2>
               <CommercialOpportunitySection data={commercialOpportunity} />
+            </CardContent>
+          </Card>
+        )}
+
+        {hasRegulatory && regulatoryLandscape && (
+          <Card className="mt-6 [--card-spacing:1.75rem] rounded-2xl border border-border shadow-[0_1px_2px_rgba(15,31,61,0.04),0_12px_32px_-20px_rgba(15,31,61,0.18)]">
+            <CardContent>
+              <h2 className="mb-4 text-[19px] font-bold text-brand-navy">
+                Regulatory Landscape
+              </h2>
+              <RegulatoryLandscapeSection data={regulatoryLandscape} />
             </CardContent>
           </Card>
         )}

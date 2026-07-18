@@ -8,6 +8,7 @@ import type {
   ClinicalResearchOutput,
   CompetitiveIntelligenceOutput,
   CommercialOpportunityOutput,
+  RegulatoryOutput,
   CitationRef,
 } from "./schemas";
 
@@ -200,6 +201,78 @@ export async function getCommercialOpportunity(memoRunId: string): Promise<Comme
       marketCrowdingConsistent: true,
       differentiationSummary: true,
       differentiationLabel: true,
+    },
+  });
+}
+
+export async function persistRegulatoryOutput(
+  memoRunId: string,
+  output: RegulatoryOutput
+): Promise<void> {
+  await db.$transaction(async (tx) => {
+    await tx.memoRun.update({
+      where: { id: memoRunId },
+      data: {
+        developmentTimelineSummary: output.developmentTimelineEstimate.summary,
+        developmentTimelineLabel: output.developmentTimelineEstimate.label,
+      },
+    });
+
+    for (const doc of output.guidanceDocuments) {
+      await tx.guidanceDocument.create({
+        data: { memoRunId, title: doc.title, url: doc.url, relevance: doc.relevance },
+      });
+    }
+
+    for (const approval of output.priorApprovalsSameMechanism) {
+      const citation = await createCitation(tx, memoRunId, approval.citation);
+      await tx.priorApproval.create({
+        data: {
+          memoRunId,
+          citationId: citation.id,
+          drug: approval.drug,
+          approvalDate: new Date(approval.approvalDate),
+        },
+      });
+    }
+
+    for (const precedent of output.endpointPrecedent) {
+      const created = await tx.endpointPrecedent.create({
+        data: {
+          memoRunId,
+          endpoint: precedent.endpoint,
+          sourcedFromLabels: precedent.sourcedFromLabels,
+        },
+      });
+      for (const citationRef of precedent.citations) {
+        const citation = await createCitation(tx, memoRunId, citationRef);
+        await tx.endpointPrecedentCitation.create({
+          data: { endpointPrecedentId: created.id, citationId: citation.id },
+        });
+      }
+    }
+  });
+}
+
+export type RegulatoryLandscape = Prisma.MemoRunGetPayload<{
+  select: {
+    developmentTimelineSummary: true;
+    developmentTimelineLabel: true;
+    guidanceDocuments: true;
+    priorApprovals: { include: { citation: true } };
+    endpointPrecedents: { include: { citations: { include: { citation: true } } } };
+  };
+}>;
+
+export async function getRegulatoryLandscape(memoRunId: string): Promise<RegulatoryLandscape | null> {
+  return db.memoRun.findUnique({
+    where: { id: memoRunId },
+    select: {
+      developmentTimelineSummary: true,
+      developmentTimelineLabel: true,
+      guidanceDocuments: true,
+      priorApprovals: { include: { citation: true } },
+      endpointPrecedents: { include: { citations: { include: { citation: true } } } },
     },
   });
 }

@@ -8,6 +8,7 @@ import {
   persistClinicalResearchOutput,
   persistCompetitiveIntelligenceOutput,
   persistCommercialOpportunityOutput,
+  persistRegulatoryOutput,
 } from "@/lib/agents/persist";
 
 export type RunAssessmentState = {
@@ -48,6 +49,9 @@ export async function runAssessment(
   if (manifest.researchOutputs.commercial) {
     await persistCommercialOpportunityOutput(memoRunId, manifest.researchOutputs.commercial);
   }
+  if (manifest.researchOutputs.regulatory) {
+    await persistRegulatoryOutput(memoRunId, manifest.researchOutputs.regulatory);
+  }
 
   // Partial results are still useful (AGENT_PLAN.md §3: surface a partial
   // memo, never hard-fail the whole run) — only error out if every agent
@@ -55,13 +59,15 @@ export async function runAssessment(
   const anyAgentSucceeded =
     manifest.agentStatuses.clinical === "complete" ||
     manifest.agentStatuses.competitive === "complete" ||
-    manifest.agentStatuses.commercial === "complete";
+    manifest.agentStatuses.commercial === "complete" ||
+    manifest.agentStatuses.regulatory === "complete";
 
   if (!anyAgentSucceeded) {
     const failures = [
       `Clinical Research: ${manifest.agentStatuses.clinical} (${manifest.agentNotes.clinical ?? "no detail"})`,
       `Competitive Intelligence: ${manifest.agentStatuses.competitive} (${manifest.agentNotes.competitive ?? "no detail"})`,
       `Commercial Opportunity: ${manifest.agentStatuses.commercial} (${manifest.agentNotes.commercial ?? "no detail"})`,
+      `Regulatory: ${manifest.agentStatuses.regulatory} (${manifest.agentNotes.regulatory ?? "no detail"})`,
     ].join("; ");
     return { error: failures, traceUrl: manifest.traceUrl };
   }
