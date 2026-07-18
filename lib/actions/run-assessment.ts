@@ -4,18 +4,22 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { runOrchestrator } from "@/lib/agents/orchestrator";
-import { persistClinicalResearchOutput } from "@/lib/agents/persist";
+import {
+  persistClinicalResearchOutput,
+  persistCompetitiveIntelligenceOutput,
+} from "@/lib/agents/persist";
 
 export type RunAssessmentState = {
   error?: string;
   traceUrl?: string;
 };
 
-// Triggered from the memo page — runs the Orchestrator (currently just
-// Clinical Research Agent; more research agents join this dispatch as
-// they're built) and persists whatever completed. Synchronous/blocking for
-// now (no progress indicator yet — that's Story 2, P1, deferred) so this
-// is slow (~60s) but proves the real path: form -> agents -> Postgres -> UI.
+// Triggered from the memo page — runs the Orchestrator (Clinical Research +
+// Competitive Intelligence so far; more research agents join this dispatch
+// as they're built) and persists whatever completed. Synchronous/blocking
+// for now (no progress indicator yet — that's Story 2, P1, deferred) so
+// this is slow (~60-120s) but proves the real path: form -> agents ->
+// Postgres -> UI.
 export async function runAssessment(
   memoRunId: string,
   _prevState: RunAssessmentState,
@@ -37,14 +41,23 @@ export async function runAssessment(
   if (manifest.researchOutputs.clinical) {
     await persistClinicalResearchOutput(memoRunId, manifest.researchOutputs.clinical);
   }
+  if (manifest.researchOutputs.competitive) {
+    await persistCompetitiveIntelligenceOutput(memoRunId, manifest.researchOutputs.competitive);
+  }
 
-  if (manifest.agentStatuses.clinical !== "complete") {
-    return {
-      error: `Clinical Research Agent ${manifest.agentStatuses.clinical}: ${
-        manifest.agentNotes.clinical ?? "no further detail"
-      }`,
-      traceUrl: manifest.traceUrl,
-    };
+  // Partial results are still useful (AGENT_PLAN.md §3: surface a partial
+  // memo, never hard-fail the whole run) — only error out if every agent
+  // that ran actually failed to produce anything.
+  const anyAgentSucceeded =
+    manifest.agentStatuses.clinical === "complete" ||
+    manifest.agentStatuses.competitive === "complete";
+
+  if (!anyAgentSucceeded) {
+    const failures = [
+      `Clinical Research: ${manifest.agentStatuses.clinical} (${manifest.agentNotes.clinical ?? "no detail"})`,
+      `Competitive Intelligence: ${manifest.agentStatuses.competitive} (${manifest.agentNotes.competitive ?? "no detail"})`,
+    ].join("; ");
+    return { error: failures, traceUrl: manifest.traceUrl };
   }
 
   revalidatePath(`/memo/${memoRunId}`);

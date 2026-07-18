@@ -4,7 +4,11 @@
 
 import type { Prisma, PrismaClient } from "@/lib/generated/prisma/client";
 import { db } from "@/lib/db";
-import type { ClinicalResearchOutput, CitationRef } from "./schemas";
+import type {
+  ClinicalResearchOutput,
+  CompetitiveIntelligenceOutput,
+  CitationRef,
+} from "./schemas";
 
 type Tx = Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">;
 
@@ -87,6 +91,73 @@ export async function persistClinicalResearchOutput(
         },
       });
     }
+  });
+}
+
+export async function persistCompetitiveIntelligenceOutput(
+  memoRunId: string,
+  output: CompetitiveIntelligenceOutput
+): Promise<void> {
+  await db.$transaction(async (tx) => {
+    for (const competitor of output.approvedCompetitors) {
+      const citation = await createCitation(tx, memoRunId, competitor.citation);
+      await tx.approvedCompetitor.create({
+        data: {
+          memoRunId,
+          citationId: citation.id,
+          drug: competitor.drug,
+          company: competitor.company,
+          mechanism: competitor.mechanism,
+          approvalDate: new Date(competitor.approvalDate),
+        },
+      });
+    }
+
+    for (const asset of output.lateStagePipeline) {
+      const citation = await createCitation(tx, memoRunId, asset.citation);
+      await tx.lateStagePipelineAsset.create({
+        data: {
+          memoRunId,
+          citationId: citation.id,
+          drug: asset.drug,
+          company: asset.company,
+          mechanism: asset.mechanism,
+          phase: asset.phase,
+          status: asset.status,
+        },
+      });
+    }
+
+    for (const gap of output.positioningGaps) {
+      await tx.positioningGap.create({
+        data: {
+          memoRunId,
+          description: gap.description,
+          label: gap.label,
+        },
+      });
+    }
+  });
+}
+
+export type CompetitiveLandscape = Prisma.MemoRunGetPayload<{
+  select: {
+    approvedCompetitors: { include: { citation: true } };
+    lateStagePipelineAssets: { include: { citation: true } };
+    positioningGaps: true;
+  };
+}>;
+
+export async function getCompetitiveLandscape(
+  memoRunId: string
+): Promise<CompetitiveLandscape | null> {
+  return db.memoRun.findUnique({
+    where: { id: memoRunId },
+    select: {
+      approvedCompetitors: { include: { citation: true } },
+      lateStagePipelineAssets: { include: { citation: true } },
+      positioningGaps: true,
+    },
   });
 }
 
