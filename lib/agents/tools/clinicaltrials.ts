@@ -7,6 +7,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import { fetchWithRetry } from "./fetch-with-retry";
+import { clinicalTrialsLimiter } from "./rate-limiter";
 
 const API_BASE = "https://clinicaltrials.gov/api/v2/studies";
 
@@ -73,9 +74,11 @@ export async function searchClinicalTrials(input: {
   });
   if (input.condition) params.set("query.cond", input.condition);
 
-  const res = await fetchWithRetry(`${API_BASE}?${params.toString()}`, {
-    headers: { Accept: "application/json" },
-  });
+  const res = await clinicalTrialsLimiter(() =>
+    fetchWithRetry(`${API_BASE}?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    })
+  );
   if (!res.ok) {
     throw new Error(`ClinicalTrials.gov API error: ${res.status} ${res.statusText}`);
   }

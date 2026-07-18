@@ -5,6 +5,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import { fetchWithRetry } from "./fetch-with-retry";
+import { pubmedLimiter } from "./rate-limiter";
 
 const ESEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi";
 const ESUMMARY = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi";
@@ -53,7 +54,9 @@ export async function searchPubmed(input: {
     retmax: String(retmax),
     retmode: "json",
   });
-  const searchRes = await fetchWithRetry(`${ESEARCH}?${searchParams.toString()}`);
+  const searchRes = await pubmedLimiter(() =>
+    fetchWithRetry(`${ESEARCH}?${searchParams.toString()}`)
+  );
   if (!searchRes.ok) {
     throw new Error(`PubMed esearch error: ${searchRes.status} ${searchRes.statusText}`);
   }
@@ -66,7 +69,9 @@ export async function searchPubmed(input: {
     id: ids.join(","),
     retmode: "json",
   });
-  const summaryRes = await fetchWithRetry(`${ESUMMARY}?${summaryParams.toString()}`);
+  const summaryRes = await pubmedLimiter(() =>
+    fetchWithRetry(`${ESUMMARY}?${summaryParams.toString()}`)
+  );
   if (!summaryRes.ok) {
     throw new Error(`PubMed esummary error: ${summaryRes.status} ${summaryRes.statusText}`);
   }
