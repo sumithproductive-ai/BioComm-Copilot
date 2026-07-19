@@ -83,6 +83,22 @@ function backfillEmptyArrayFields(input: unknown): unknown {
   return record;
 }
 
+// The system prompt's "MUST include every drug in the reference list" rule
+// was previously prose-only — the schema accepts an empty array as valid,
+// so a model that under-researched (or just skipped the instruction) got a
+// clean safeParse success with nothing to catch it. Confirmed as a real,
+// recurring failure mode across multiple live runs (empty on some, fully
+// populated on others, same target) — this closes the gap the same way
+// Deal Comparables' no-fabrication rule is enforced: check it in code, not
+// just prompt text, and feed a miss back for self-correction like the
+// malformed-JSON path already does.
+function findMissingReferenceCompetitors(output: CompetitiveIntelligenceOutput): string[] {
+  const found = new Set(output.approvedCompetitors.map((c) => c.drug.toLowerCase()));
+  return UC_COMPETITOR_REFERENCE_LIST.filter((ref) => !found.has(ref.drug.toLowerCase())).map(
+    (ref) => ref.drug
+  );
+}
+
 export async function runCompetitiveIntelligenceAgent(
   input: CompetitiveIntelligenceInput,
   parentSpan?: LangfuseSpanClient
@@ -146,7 +162,22 @@ Today's date is ${today}. Use search_clinical_trials and web_search to gather re
       const parsed = competitiveIntelligenceOutputSchema.safeParse(
         backfillEmptyArrayFields(submitBlock.input)
       );
-      if (parsed.success) return parsed.data;
+      if (parsed.success) {
+        const missing = findMissingReferenceCompetitors(parsed.data);
+        if (missing.length === 0) return parsed.data;
+        messages.push({
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: submitBlock.id,
+              content: `submit_findings input failed validation: approvedCompetitors is missing required reference-list drugs: ${missing.join(", ")}. Per the hard rule in your system prompt, every drug on that list must appear in approvedCompetitors with a real citation, unless you have direct cited evidence it's been withdrawn from the market — in which case say so explicitly instead of omitting it. Search for the missing ones and call submit_findings again with the complete list.`,
+              is_error: true,
+            },
+          ],
+        });
+        continue;
+      }
       // Malformed structured output — confirmed in testing: with a larger
       // schema (11+ competitors, each a full object), the model can garble
       // a field into a string instead of the real JSON shape. Feed the
