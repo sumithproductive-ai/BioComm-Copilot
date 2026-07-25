@@ -13,7 +13,7 @@ const initialState: RunAssessmentState = {};
 
 const POLL_INTERVAL_MS = 2500;
 
-type AgentRow = { agentName: string; status: AgentLiveStatus; attempt: number };
+type AgentRow = { agentName: string; status: AgentLiveStatus; attempt: number; note: string | null };
 
 function isTerminal(status: AgentLiveStatus): boolean {
   return status === "Complete" || status === "Failed";
@@ -49,7 +49,7 @@ const STATUS_BADGE_STYLES: Record<AgentLiveStatus, string> = {
 
 type AgentProgressData = {
   assessmentStartedAt: Date | null;
-  agentProgress: { agentName: string; status: string; attempt: number }[];
+  agentProgress: { agentName: string; status: string; attempt: number; note: string | null }[];
 } | null;
 
 function rowsFromData(data: AgentProgressData): AgentRow[] {
@@ -60,6 +60,7 @@ function rowsFromData(data: AgentProgressData): AgentRow[] {
       agentName: agent.key,
       status: (row?.status as AgentLiveStatus) ?? "Queued",
       attempt: row?.attempt ?? 0,
+      note: row?.note ?? null,
     };
   });
 }
@@ -96,6 +97,17 @@ export function AgentProgressSection({
   const started = hasSubmitted || (!!data && data.agentProgress.length > 0);
   const rows = rowsFromData(data);
   const allTerminal = started && rows.every((row) => isTerminal(row.status));
+  const anyFailed = rows.some((row) => row.status === "Failed");
+  // Reload only on a genuine full success — reloading a failed run would
+  // just re-render the same stuck-looking progress list (nothing was
+  // persisted to show), and since a fresh page load already sees the
+  // terminal Failed rows in its initial data, reloading on any terminal
+  // state (the previous behavior) caused an immediate reload-on-mount loop
+  // the moment a run failed. Confirmed live (comprehensive review,
+  // 2026-07-25): a rejected indication left every agent stuck at "Queued"
+  // forever before this fix existed at all — this is the other half of
+  // that fix, once run-assessment.ts actually starts writing "Failed".
+  const allComplete = started && rows.every((row) => row.status === "Complete");
 
   useEffect(() => {
     if (!started || allTerminal) return;
@@ -119,8 +131,8 @@ export function AgentProgressSection({
   }, [started, allTerminal]);
 
   useEffect(() => {
-    if (allTerminal) window.location.reload();
-  }, [allTerminal]);
+    if (allComplete) window.location.reload();
+  }, [allComplete]);
 
   if (!started) {
     return (
@@ -148,6 +160,13 @@ export function AgentProgressSection({
 
   return (
     <div className="flex flex-col gap-3">
+      {anyFailed && (
+        <p className="flex items-center gap-1.5 text-sm text-destructive" role="alert">
+          <CircleAlert className="size-4 shrink-0" />
+          This assessment failed — see the failed agent(s) below for details. Start a new assessment to try again.
+        </p>
+      )}
+
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span className="font-semibold tracking-wide uppercase">
           {completeCount} / {rows.length} complete
@@ -162,22 +181,28 @@ export function AgentProgressSection({
             <div
               key={row.agentName}
               className={cn(
-                "flex items-center justify-between gap-3 rounded-[9px] border border-border bg-white px-3 py-2",
-                row.status === "Running" && "border-blue-200"
+                "flex flex-col gap-1 rounded-[9px] border border-border bg-white px-3 py-2",
+                row.status === "Running" && "border-blue-200",
+                row.status === "Failed" && "border-red-200"
               )}
             >
-              <div className="flex items-center gap-2.5">
-                <StatusIcon status={row.status} />
-                <span className={cn("text-sm", row.status === "Running" ? "font-semibold text-brand-navy" : "text-foreground")}>
-                  {roster?.label ?? row.agentName}
-                </span>
-                {row.attempt > 0 && (
-                  <span className="text-xs text-muted-foreground">retry {row.attempt}</span>
-                )}
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <StatusIcon status={row.status} />
+                  <span className={cn("text-sm", row.status === "Running" ? "font-semibold text-brand-navy" : "text-foreground")}>
+                    {roster?.label ?? row.agentName}
+                  </span>
+                  {row.attempt > 0 && (
+                    <span className="text-xs text-muted-foreground">retry {row.attempt}</span>
+                  )}
+                </div>
+                <Badge variant="outline" className={cn("font-medium", STATUS_BADGE_STYLES[row.status])}>
+                  {row.status}
+                </Badge>
               </div>
-              <Badge variant="outline" className={cn("font-medium", STATUS_BADGE_STYLES[row.status])}>
-                {row.status}
-              </Badge>
+              {row.status === "Failed" && row.note && (
+                <p className="pl-6 text-xs text-destructive">{row.note}</p>
+              )}
             </div>
           );
         })}

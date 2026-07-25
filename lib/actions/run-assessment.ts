@@ -7,6 +7,7 @@ import { AGENT_ROSTER } from "@/lib/agents/roster";
 import {
   initializeAgentProgress,
   upsertAgentRunStatus,
+  getAgentProgress,
   persistClinicalResearchOutput,
   persistCompetitiveIntelligenceOutput,
   persistCommercialOpportunityOutput,
@@ -44,40 +45,68 @@ export async function runAssessment(
   );
 
   after(async () => {
-    const manifest = await runOrchestrator(
-      {
-        target: memoRun.target,
-        modality: memoRun.modality,
-        stage: memoRun.stage,
-        indication: memoRun.indication,
-        context: memoRun.context ?? undefined,
-      },
-      {
-        onAgentStatusChange: (agentName, status, info) =>
-          upsertAgentRunStatus(memoRunId, agentName, status, info.attempt, info.note),
-      }
-    );
+    try {
+      const manifest = await runOrchestrator(
+        {
+          target: memoRun.target,
+          modality: memoRun.modality,
+          stage: memoRun.stage,
+          indication: memoRun.indication,
+          context: memoRun.context ?? undefined,
+        },
+        {
+          onAgentStatusChange: (agentName, status, info) =>
+            upsertAgentRunStatus(memoRunId, agentName, status, info.attempt, info.note),
+        }
+      );
 
-    if (manifest.researchOutputs.clinical) {
-      await persistClinicalResearchOutput(memoRunId, manifest.researchOutputs.clinical);
-    }
-    if (manifest.researchOutputs.competitive) {
-      await persistCompetitiveIntelligenceOutput(memoRunId, manifest.researchOutputs.competitive);
-    }
-    if (manifest.researchOutputs.commercial) {
-      await persistCommercialOpportunityOutput(memoRunId, manifest.researchOutputs.commercial);
-    }
-    if (manifest.researchOutputs.regulatory) {
-      await persistRegulatoryOutput(memoRunId, manifest.researchOutputs.regulatory);
-    }
-    if (manifest.researchOutputs.dealComparables) {
-      await persistDealComparablesOutput(memoRunId, manifest.researchOutputs.dealComparables);
-    }
-    if (manifest.criticOutput) {
-      await persistCriticOutput(memoRunId, manifest.criticOutput);
-    }
-    if (manifest.synthesisOutput) {
-      await persistSynthesisOutput(memoRunId, manifest.synthesisOutput, manifest.elapsedMs);
+      if (manifest.researchOutputs.clinical) {
+        await persistClinicalResearchOutput(memoRunId, manifest.researchOutputs.clinical);
+      }
+      if (manifest.researchOutputs.competitive) {
+        await persistCompetitiveIntelligenceOutput(memoRunId, manifest.researchOutputs.competitive);
+      }
+      if (manifest.researchOutputs.commercial) {
+        await persistCommercialOpportunityOutput(memoRunId, manifest.researchOutputs.commercial);
+      }
+      if (manifest.researchOutputs.regulatory) {
+        await persistRegulatoryOutput(memoRunId, manifest.researchOutputs.regulatory);
+      }
+      if (manifest.researchOutputs.dealComparables) {
+        await persistDealComparablesOutput(memoRunId, manifest.researchOutputs.dealComparables);
+      }
+      if (manifest.criticOutput) {
+        await persistCriticOutput(memoRunId, manifest.criticOutput);
+      }
+      if (manifest.synthesisOutput) {
+        await persistSynthesisOutput(memoRunId, manifest.synthesisOutput, manifest.elapsedMs);
+      }
+    } catch (err) {
+      // Confirmed live (comprehensive review, 2026-07-25): a rejected
+      // indication makes runOrchestrator throw synchronously before any
+      // agent's onAgentStatusChange ever fires — with no catch here, that
+      // exception was swallowed by after() (logged server-side only) and
+      // every AgentProgress row stayed "Queued" forever, since nothing ever
+      // wrote a terminal status. Same applies to a throw mid-run (e.g. a
+      // persistence call failing after some agents already succeeded).
+      // Mark whatever hasn't already reached a terminal status as Failed so
+      // the client's polling loop can detect and surface it instead of
+      // polling indefinitely.
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[runAssessment] run ${memoRunId} failed:`, err);
+      const progress = await getAgentProgress(memoRunId);
+      const nonTerminalAgents = (progress?.agentProgress ?? []).filter(
+        (row) => row.status === "Queued" || row.status === "Running"
+      );
+      const agentsToMark =
+        nonTerminalAgents.length > 0
+          ? nonTerminalAgents.map((row) => row.agentName)
+          : AGENT_ROSTER.map((agent) => agent.key);
+      await Promise.all(
+        agentsToMark.map((agentName) =>
+          upsertAgentRunStatus(memoRunId, agentName, "Failed", 0, `Run failed: ${message}`)
+        )
+      );
     }
   });
 
