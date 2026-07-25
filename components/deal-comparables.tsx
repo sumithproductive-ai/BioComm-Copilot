@@ -20,9 +20,14 @@ function CitationLink({
   );
 }
 
-function TableHeader({ children }: { children: React.ReactNode }) {
+function TableHeader({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <th className="border-b border-border px-3 py-2 text-left text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+    <th
+      className={cn(
+        "border-b border-border px-3 py-2 text-left text-xs font-semibold tracking-wide text-muted-foreground uppercase",
+        className
+      )}
+    >
       {children}
     </th>
   );
@@ -54,15 +59,26 @@ export function DealComparablesSection({ data }: { data: DealComparablesLandscap
   }
 
   return (
+    // table-fixed with explicit per-column widths: the previous w-full +
+    // content-driven layout let a long Terms cell starve the Tag column
+    // down to a sliver, clipping the compStrength badge mid-word — and a
+    // first attempt at fixing this by letting the table grow past its
+    // container (min-w-full + overflow-x-auto) technically stopped the
+    // internal clipping but just pushed Tag out of the default scroll
+    // viewport instead, which still looked broken with no visible
+    // affordance to scroll (confirmed live, comprehensive review,
+    // 2026-07-25). table-fixed gives Tag a guaranteed share of the width
+    // no matter how long Terms' free text is — Terms wraps onto more
+    // lines instead of pushing other columns out of view.
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-sm">
+      <table className="w-full table-fixed border-collapse text-sm">
         <thead>
           <tr>
-            <TableHeader>Asset</TableHeader>
-            <TableHeader>Counterparty</TableHeader>
-            <TableHeader>Stage / Type</TableHeader>
-            <TableHeader>Terms</TableHeader>
-            <TableHeader>Tag</TableHeader>
+            <TableHeader className="w-[20%]">Asset</TableHeader>
+            <TableHeader className="w-[15%]">Counterparty</TableHeader>
+            <TableHeader className="w-[15%]">Stage / Type</TableHeader>
+            <TableHeader className="w-[33%]">Terms</TableHeader>
+            <TableHeader className="w-[17%]">Tag</TableHeader>
           </tr>
         </thead>
         <tbody>
