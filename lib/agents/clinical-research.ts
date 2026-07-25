@@ -93,6 +93,17 @@ export async function runClinicalResearchAgent(
 ): Promise<ClinicalResearchOutput> {
   const today = new Date().toISOString().slice(0, 10);
 
+  // Provenance tracking for the "never invent an NCT number" hard rule —
+  // previously prompt-only: the schema only validates NCT ID *format*
+  // (^NCT\d{8}$), not that it actually came from a real
+  // search_clinical_trials result this conversation, so a well-formatted
+  // but fabricated ID would have passed cleanly (comprehensive review,
+  // 2026-07-25 — the same class of unenforced guardrail found and fixed
+  // elsewhere in this codebase). Every NCT ID that ever appears in a real
+  // tool result is recorded here; the final submission is checked against
+  // it before being accepted.
+  const realNctIds = new Set<string>();
+
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
@@ -151,7 +162,24 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
       const parsed = clinicalResearchOutputSchema.safeParse(
         backfillEmptyArrayFields(submitBlock.input)
       );
-      if (parsed.success) return parsed.data;
+      if (parsed.success) {
+        const unverifiedNctIds = parsed.data.trials
+          .map((t) => t.nctId)
+          .filter((nctId) => !realNctIds.has(nctId));
+        if (unverifiedNctIds.length === 0) return parsed.data;
+        messages.push({
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: submitBlock.id,
+              content: `submit_findings input failed validation: these NCT IDs are not in the search_clinical_trials results from this conversation: ${unverifiedNctIds.join(", ")}. Per the hard rule in your system prompt, every trial must come from a real search_clinical_trials result — never invent or recall an NCT ID from memory. Either search for these trials to confirm them, or remove them from the trials array and call submit_findings again.`,
+              is_error: true,
+            },
+          ],
+        });
+        continue;
+      }
       // Malformed structured output (confirmed in testing: the model can
       // garble a large tool call into a single string field instead of the
       // real JSON shape) — feed the validation error back as a tool_result
@@ -190,6 +218,9 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
         const result = await searchClinicalTrials(
           block.input as { query: string; condition?: string; pageSize?: number }
         );
+        for (const study of result) {
+          if (study.nctId) realNctIds.add(study.nctId);
+        }
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",
