@@ -64,6 +64,21 @@ export async function runAssessment(
         await persistClinicalResearchOutput(memoRunId, manifest.researchOutputs.clinical);
       }
       if (manifest.researchOutputs.competitive) {
+        // Diagnostic for an unresolved, intermittent anomaly (comprehensive
+        // review, 2026-07-25): one real run showed agent_progress status
+        // "Complete" for this agent with zero rows across all 3 of its
+        // tables (approved_competitor, late_stage_pipeline_asset,
+        // positioning_gap) — meaning either the agent itself returned
+        // empty arrays despite validating successfully, or persistence
+        // silently no-op'd. This log line settles which the next time it
+        // recurs: if the counts logged here are already 0, it's an agent
+        // issue; if they're non-zero and the DB still ends up empty
+        // afterward, it's a persistence issue.
+        const { approvedCompetitors, lateStagePipeline, positioningGaps } =
+          manifest.researchOutputs.competitive;
+        console.log(
+          `[runAssessment] run ${memoRunId} persisting competitive intelligence: approvedCompetitors=${approvedCompetitors.length} lateStagePipeline=${lateStagePipeline.length} positioningGaps=${positioningGaps.length}`
+        );
         await persistCompetitiveIntelligenceOutput(memoRunId, manifest.researchOutputs.competitive);
       }
       if (manifest.researchOutputs.commercial) {
