@@ -9,6 +9,18 @@
 # lib/db.ts — so Prisma talks to Postgres through the plain-JS `pg` package,
 # not a native query-engine binary. That means the classic Docker/Prisma
 # "wrong binaryTarget" gotcha does not apply here; alpine is safe to use.
+#
+# Platform note: local dev happens on Apple Silicon (arm64) — `docker build`
+# on this machine produces an arm64 image by default, which will not run on
+# Azure App Service's linux/amd64 plans (confirmed: attempting to run an
+# arm64 image there fails outright, it is not just slower). Building for
+# the actual deploy target requires an explicit platform flag:
+#   docker buildx build --platform linux/amd64 -t biocomm-copilot .
+# Confirmed working end-to-end (2026-07-25): built this way, the image ran
+# correctly on this same arm64 Mac under QEMU emulation (slower than a
+# native build, ~87s vs ~15s, but functionally correct) — booted, served
+# real pages, and read real data from Postgres over the Docker network. On
+# actual amd64 Azure hardware this runs natively, no emulation involved.
 
 # ---------------------------------------------------------------------------
 # deps — install dependencies only, cached separately from source changes.
