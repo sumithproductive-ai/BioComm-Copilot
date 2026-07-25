@@ -131,12 +131,28 @@ export type CompetitiveIntelligenceOutput = z.infer<typeof competitiveIntelligen
 // Commercial Opportunity Agent — AGENT_PLAN.md §4.4
 // ---------------------------------------------------------------------------
 
-export const commercialOpportunityOutputSchema = z.object({
-  patientPopulationEstimate: z.object({
+// The agent's system prompt calls this "the single most important
+// guardrail for this agent" — patientPopulationEstimate.label must never be
+// "Fact" without a citation directly backing that exact figure. Previously
+// prompt-only (the field comment literally said "enforced in the agent
+// prompt, not the type"), exactly the class of unenforced guardrail a
+// comprehensive review (2026-07-25) found repeatedly failing in practice
+// elsewhere in this codebase. Structurally enforced now the same way Deal
+// Comparables' no-fabrication rule already is: a citation-less estimate can
+// still be submitted, just never labeled "Fact".
+export const patientPopulationEstimateSchema = z
+  .object({
     value: z.string(),
-    label: claimLabelSchema, // "never Fact unless directly sourced" — enforced in the agent prompt, not the type
+    label: claimLabelSchema,
     citation: citationRefSchema.optional(),
-  }),
+  })
+  .refine((data) => data.label !== "Fact" || !!data.citation, {
+    message: 'patientPopulationEstimate.label cannot be "Fact" without a citation backing the figure',
+    path: ["label"],
+  });
+
+export const commercialOpportunityOutputSchema = z.object({
+  patientPopulationEstimate: patientPopulationEstimateSchema,
   unmetNeed: z.object({
     summary: z.string(),
     citations: z.array(citationRefSchema),

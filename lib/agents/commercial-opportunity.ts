@@ -242,10 +242,26 @@ ${JSON.stringify(draft)}`,
   });
 
   const submitBlock = response.content.filter(isToolUseBlock).find((b) => b.name === "submit_findings");
-  if (!submitBlock) return draft; // shouldn't happen with tool_choice forced, but fall back to the draft rather than fail the whole agent over a validation step
+  if (!submitBlock) {
+    // Shouldn't happen with tool_choice forced, but fall back to the draft
+    // rather than fail the whole agent over a validation step — logged
+    // because this silently ships marketCrowdingAssessment un-reconciled
+    // against Competitive Intelligence's actual findings (the exact
+    // contradiction this step exists to catch, per Story 8), which was
+    // previously invisible when it happened (comprehensive review,
+    // 2026-07-25).
+    console.warn("[commercial-opportunity] Reconciliation call returned no submit_findings block — falling back to the pre-reconciliation draft.");
+    return draft;
+  }
 
   const parsed = commercialOpportunityOutputSchema.safeParse(backfillEmptyArrayFields(submitBlock.input));
-  return parsed.success ? parsed.data : draft;
+  if (!parsed.success) {
+    console.warn(
+      `[commercial-opportunity] Reconciliation output failed validation — falling back to the pre-reconciliation draft: ${parsed.error.message}`
+    );
+    return draft;
+  }
+  return parsed.data;
 }
 
 export async function runCommercialOpportunityAgent(
