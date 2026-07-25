@@ -55,6 +55,24 @@ function signalBandIndex(confidenceScore: number): number {
   return 0;
 }
 
+// Story 13 AC: "Time is shown in minutes and seconds (e.g. 'Generated in
+// 14m 32s')". Story 10 AC: "As-of date is displayed at the top of each
+// memo section" (ERD.md simplifies this to one stamp on the run rather than
+// literally every section — ERD.md's own design note). Both asOfDate and
+// elapsedMs were already computed by Synthesis, persisted, and fetched all
+// the way to this component's props — just never rendered until now
+// (comprehensive review, 2026-07-25).
+function formatElapsedLabel(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.round(elapsedMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `Generated in ${minutes}m ${seconds}s`;
+}
+
+function formatAsOfDate(asOfDate: Date): string {
+  return asOfDate.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+}
+
 function StatTile({
   href,
   label,
@@ -87,6 +105,14 @@ export function DecisionSummarySection({ data }: { data: DecisionSummaryRecord }
 
   return (
     <div className="flex flex-col gap-4">
+      {(data.asOfDate || data.elapsedMs != null) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          {data.asOfDate && <span>As of {formatAsOfDate(data.asOfDate)}</span>}
+          {data.asOfDate && data.elapsedMs != null && <span aria-hidden>·</span>}
+          {data.elapsedMs != null && <span>{formatElapsedLabel(data.elapsedMs)}</span>}
+        </div>
+      )}
+
       <div className="flex items-center gap-3">
         <span className="shrink-0 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           Overall Signal
