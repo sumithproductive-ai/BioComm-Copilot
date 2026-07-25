@@ -9,7 +9,10 @@ import {
   type CompetitiveIntelligenceOutput,
 } from "./schemas";
 import { clinicalTrialsToolDefinition, searchClinicalTrials } from "./tools/clinicaltrials";
-import { UC_COMPETITOR_REFERENCE_LIST } from "@/lib/config/uc-competitors";
+import {
+  UC_COMPETITOR_REFERENCE_LIST,
+  findMissingReferenceCompetitors as findMissingReferenceCompetitorsByName,
+} from "@/lib/config/uc-competitors";
 
 const client = new Anthropic();
 
@@ -92,11 +95,15 @@ function backfillEmptyArrayFields(input: unknown): unknown {
 // Deal Comparables' no-fabrication rule is enforced: check it in code, not
 // just prompt text, and feed a miss back for self-correction like the
 // malformed-JSON path already does.
+//
+// Matching itself is delegated to the shared, substring-based
+// findMissingReferenceCompetitors in lib/config/uc-competitors.ts — an
+// earlier exact-match version of this check lived here and duplicated (with
+// the same bug) in synthesis.ts's confidence-score calculation; see that
+// file's comment for the concrete evidence of what exact matching broke.
 function findMissingReferenceCompetitors(output: CompetitiveIntelligenceOutput): string[] {
-  const found = new Set(output.approvedCompetitors.map((c) => c.drug.toLowerCase()));
-  return UC_COMPETITOR_REFERENCE_LIST.filter((ref) => !found.has(ref.drug.toLowerCase())).map(
-    (ref) => ref.drug
-  );
+  const reportedNames = output.approvedCompetitors.map((c) => c.drug);
+  return findMissingReferenceCompetitorsByName(reportedNames).map((ref) => ref.drug);
 }
 
 export async function runCompetitiveIntelligenceAgent(

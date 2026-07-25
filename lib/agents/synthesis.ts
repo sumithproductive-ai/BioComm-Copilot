@@ -20,7 +20,10 @@ import {
   type CriticOutput,
   type DecisionSummary,
 } from "./schemas";
-import { UC_COMPETITOR_REFERENCE_LIST } from "@/lib/config/uc-competitors";
+import {
+  UC_COMPETITOR_REFERENCE_LIST,
+  findMissingReferenceCompetitors,
+} from "@/lib/config/uc-competitors";
 
 const client = new Anthropic();
 
@@ -47,11 +50,20 @@ function clinicalDataCompleteness(clinical: ResearchOutputs["clinical"]): number
 // competitive_coverage_completeness = fraction of the hardcoded major-UC-
 // competitor reference list actually present in approvedCompetitors — the
 // same diff Critic's MissingCompetitor check runs, expressed as a score.
+//
+// Uses the shared, substring-based findMissingReferenceCompetitors (not an
+// exact-match Set lookup) — confirmed live (comprehensive review,
+// 2026-07-25) that agents inconsistently report "Vedolizumab" vs.
+// "Vedolizumab (Entyvio)", and exact matching silently scored a
+// fully-complete 12/11 competitor list as 0.000, corrupting the displayed
+// Confidence Score by ~2 points on a real run. Do not reintroduce a local
+// exact-match copy of this check here.
 function competitiveCoverageCompleteness(competitive: ResearchOutputs["competitive"]): number {
   if (!competitive) return 0;
-  const found = new Set(competitive.approvedCompetitors.map((c) => c.drug.toLowerCase()));
-  const matched = UC_COMPETITOR_REFERENCE_LIST.filter((ref) => found.has(ref.drug.toLowerCase()));
-  return matched.length / UC_COMPETITOR_REFERENCE_LIST.length;
+  const reportedNames = competitive.approvedCompetitors.map((c) => c.drug);
+  const missing = findMissingReferenceCompetitors(reportedNames);
+  const matchedCount = UC_COMPETITOR_REFERENCE_LIST.length - missing.length;
+  return matchedCount / UC_COMPETITOR_REFERENCE_LIST.length;
 }
 
 // commercial_source_quality = fraction of the three sourced/labeled

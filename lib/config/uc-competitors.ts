@@ -26,6 +26,36 @@ export type UcCompetitor = {
   approvedYear: number;
 };
 
+// Matches a reported drug name against this reference list. Deliberately a
+// substring check, not exact equality: confirmed live (comprehensive review,
+// 2026-07-25) that agents inconsistently report drug names as either the
+// bare generic ("Vedolizumab") or "Generic (Brand)" ("Vedolizumab
+// (Entyvio)") — exact matching silently zeroed out
+// competitiveCoverageCompleteness (a 20%-weighted Confidence Score
+// component) for a run whose competitor list was actually 100% complete,
+// corrupting the displayed score by ~2 points. Both the drug's generic name
+// and its brand name are checked as substrings so either reporting style
+// matches. Shared by competitive-intelligence.ts's missing-competitor retry
+// check and synthesis.ts's confidence sub-score — do not duplicate this
+// logic, both call sites must agree on what "present" means.
+export function isReferenceCompetitorReported(
+  reference: UcCompetitor,
+  reportedDrugNames: string[]
+): boolean {
+  const generic = reference.drug.toLowerCase();
+  const brand = reference.brandName.toLowerCase();
+  return reportedDrugNames.some((reported) => {
+    const normalized = reported.toLowerCase();
+    return normalized.includes(generic) || normalized.includes(brand);
+  });
+}
+
+export function findMissingReferenceCompetitors(reportedDrugNames: string[]): UcCompetitor[] {
+  return UC_COMPETITOR_REFERENCE_LIST.filter(
+    (reference) => !isReferenceCompetitorReported(reference, reportedDrugNames)
+  );
+}
+
 export const UC_COMPETITOR_REFERENCE_LIST: UcCompetitor[] = [
   {
     drug: "Vedolizumab",
