@@ -29,6 +29,50 @@ const criticSubmissionSchema = z.object({
   flags: z.array(criticFlagSchema),
 });
 
+// Defense in depth for the system prompt's "never include a flag you
+// talked yourself out of" rule. Confirmed live (comprehensive review,
+// 2026-07-25): a real run's Reviewer Notes contained a "Missing competitor"
+// flag whose own description read "...actually present. (No issue -
+// retracting)" — the model reasoned its way out of the flag mid-sentence
+// but still submitted it. A prompt instruction alone is exactly the class
+// of unenforced guardrail this codebase has repeatedly found to fail in
+// practice (see e.g. the Competitive Intelligence reference-list bug) —
+// this is a cheap, deterministic backstop, not a replacement for the
+// prompt fix. Matches case-insensitively; logs when it fires so a
+// persistent pattern is visible in server logs rather than silently
+// masked forever.
+const SELF_CONTRADICTION_MARKERS = [
+  "no issue",
+  "not an issue",
+  "actually fine",
+  "actually present",
+  "actually correct",
+  "retracting",
+  "retract this",
+  "on second look",
+  "on second thought",
+  "never mind",
+  "false positive",
+  "disregard this",
+];
+
+function isSelfContradictingFlag(description: string): boolean {
+  const normalized = description.toLowerCase();
+  return SELF_CONTRADICTION_MARKERS.some((marker) => normalized.includes(marker));
+}
+
+function dropSelfContradictingFlags(
+  flags: z.infer<typeof criticFlagSchema>[]
+): z.infer<typeof criticFlagSchema>[] {
+  return flags.filter((flag) => {
+    if (!isSelfContradictingFlag(flag.description)) return true;
+    console.warn(
+      `[critic] Dropped a self-contradicting flag (model reasoned its way out of it but submitted it anyway): ${flag.type} / ${flag.section} — "${flag.description}"`
+    );
+    return false;
+  });
+}
+
 const SYSTEM_PROMPT = `You are the Critic Agent for BioComm Copilot, a commercialization intelligence system for ulcerative colitis (UC) therapy assets.
 
 Your job: adversarially review the 5 research agent outputs you're given (Clinical Research, Competitive Intelligence, Commercial Opportunity, Regulatory, Deal Comparables) for a single therapy asset, and flag every problem you find. You do not have web search or any other tool — you reason only over the structured JSON you're given, plus the hardcoded UC competitor reference list below. Do not invent facts to fill gaps; your job is to flag gaps, not close them.
@@ -48,7 +92,8 @@ ${REFERENCE_LIST_TEXT}
 For each flag, set "section" to the name of the research section it applies to (e.g. "Clinical Research", "Competitive Intelligence", "Commercial Opportunity", "Regulatory", "Deal Comparables"), and "description" to a specific, concrete explanation — name the actual claim, drug, or field, not a generic restatement of the check.
 
 Hard rules:
-- Never filter, soften, or omit a flag once you've identified it — every flag you find must appear in your output. This is a compliance-relevant check for a BD tool; false negatives are worse than over-flagging.
+- Never filter or soften a flag that is genuinely correct — every real problem you confirm must appear in your output as its own array entry. This is a compliance-relevant check for a BD tool; false negatives on real problems are worse than over-flagging.
+- This does NOT mean including a flag you talked yourself out of. If, while checking something, you conclude there is actually no problem (e.g. you first thought a competitor was missing, then noticed it's present under a different name or citation), that is not a flag — do not add it to the array. A flag's description must never contain hedging or self-correction language like "actually fine," "no issue," "retracting," or "on second look" — if your description would need to say any of that, the correct action is to not emit that flag at all, not to emit it with a caveat. Every entry in the array must be a confirmed, real problem end to end.
 - Do not fabricate a problem that isn't there just to have output — if a section is null (that research agent failed or produced nothing), do not run checks against it and do not flag its absence as one of the 7 check types above (there is no flag type for "missing section").
 - Every flag must be traceable to something actually present in the JSON you were given — don't speculate about data you weren't given.
 
@@ -141,9 +186,10 @@ Run all 7 checks from your system prompt and call submit_findings with every fla
     if (submitBlock) {
       const parsed = criticSubmissionSchema.safeParse(submitBlock.input);
       if (parsed.success) {
+        const flags = dropSelfContradictingFlags(parsed.data.flags);
         return criticOutputSchema.parse({
-          flags: parsed.data.flags,
-          hasCriticalFlags: parsed.data.flags.length > 0,
+          flags,
+          hasCriticalFlags: flags.length > 0,
         });
       }
       // Same confirmed-at-scale failure mode as the research agents: feed
