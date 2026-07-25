@@ -1,73 +1,70 @@
-# syntax=docker/dockerfile:1
+# Capstone deployment image — Next.js standalone + Prisma migrate-on-start.
 #
-# Multi-stage build for BioComm Copilot (Next.js App Router, standalone
-# output — see next.config.ts). Node 22 chosen to match local dev
-# (confirmed via `node --version` on the dev machine; no .nvmrc/.node-version
-# or package.json#engines pinned one otherwise).
+# Requires next.config.ts to include:  output: 'standalone'
+# The entrypoint runs `prisma migrate deploy` BEFORE the server starts — the
+# Day 4 rule ("always migrate before deploying new code") encoded in the image.
 #
-# Prisma note: this project uses @prisma/adapter-pg (driver adapters) — see
-# lib/db.ts — so Prisma talks to Postgres through the plain-JS `pg` package,
-# not a native query-engine binary. That means the classic Docker/Prisma
-# "wrong binaryTarget" gotcha does not apply here; alpine is safe to use.
+# Provided by the HumanAngle capstone platform template (2026-07-25) — do not
+# diverge from this without a reason, since it's built for a specific
+# constraint of the shared deploy environment: the container is the only
+# thing that can reach the database (private VNET, no external access), so
+# migrations have to run from inside the container at startup rather than as
+# a separate step from a CI runner or a developer's machine. That's also why
+# this copies the Prisma CLI into the runtime image (unlike a "minimal
+# standalone" Dockerfile that would only ship the traced server output) —
+# `prisma migrate deploy` needs it at container start, not just build time.
 #
-# Platform note: local dev happens on Apple Silicon (arm64) — `docker build`
-# on this machine produces an arm64 image by default, which will not run on
-# Azure App Service's linux/amd64 plans (confirmed: attempting to run an
-# arm64 image there fails outright, it is not just slower). Building for
-# the actual deploy target requires an explicit platform flag:
-#   docker buildx build --platform linux/amd64 -t biocomm-copilot .
-# Confirmed working end-to-end (2026-07-25): built this way, the image ran
-# correctly on this same arm64 Mac under QEMU emulation (slower than a
-# native build, ~87s vs ~15s, but functionally correct) — booted, served
-# real pages, and read real data from Postgres over the Docker network. On
-# actual amd64 Azure hardware this runs natively, no emulation involved.
-
-# ---------------------------------------------------------------------------
-# deps — install dependencies only, cached separately from source changes.
-# Needs prisma.config.ts + prisma/ present before `npm ci` so its
-# `postinstall: "prisma generate"` script can find the schema.
-# ---------------------------------------------------------------------------
-FROM node:22-alpine AS deps
-WORKDIR /app
-COPY package.json package-lock.json prisma.config.ts ./
+# Two fixes on top of the template as given, both confirmed via a real
+# `docker compose up --build` run (2026-07-25), not assumed:
+#
+# 1. It originally ran `npm ci` right after copying only package*.json,
+#    before prisma/schema.prisma existed in the build context — but this
+#    project's package.json has `postinstall: "prisma generate"`, so `npm
+#    ci` itself failed outright ("Could not find Prisma Schema"), never
+#    even reaching the build. Fixed by moving prisma.config.ts + prisma/
+#    ahead of `npm ci`.
+#
+# 2. The template's runtime stage cherry-picked node_modules/prisma,
+#    node_modules/@prisma, and node_modules/.bin/prisma individually — but
+#    the Prisma CLI's real dependency tree extends past that (confirmed by
+#    fixing one missing-file error at a time and hitting another each time:
+#    a symlink-relative wasm lookup broke first, then a missing transitive
+#    dep — `@prisma/config` needs the `effect` package, which was never
+#    copied). Cherry-picking node_modules subdirectories for something with
+#    real transitive dependencies is inherently fragile. Fixed by copying
+#    the build stage's full node_modules instead of hand-picking pieces —
+#    this does give up some of `output: standalone`'s size benefit, but
+#    correctness matters more than image size here, and the constraint
+#    driving this whole file (only the container can reach the database, so
+#    `prisma migrate deploy` has to run from inside it) already fights
+#    against a minimal image to begin with.
+FROM node:22-alpine AS build
+WORKDIR /src
+COPY package*.json prisma.config.ts ./
 COPY prisma ./prisma
 RUN npm ci
-
-# ---------------------------------------------------------------------------
-# builder — full source + production build
-# ---------------------------------------------------------------------------
-FROM node:22-alpine AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# `prisma generate` only introspects prisma/schema.prisma — it never
-# connects to a real database — so this placeholder just satisfies
-# prisma.config.ts's `datasource.url` read at build time. The real
-# DATABASE_URL is supplied to the runner container at deploy time, never
-# baked into the image.
-ENV DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder"
-RUN npx prisma generate
-RUN npm run build
+RUN npx prisma generate && npm run build
 
-# ---------------------------------------------------------------------------
-# runner — minimal production image: just the traced standalone output,
-# not the full node_modules tree or source.
-# ---------------------------------------------------------------------------
-FROM node:22-alpine AS runner
+# ---- runtime stage ----
+FROM node:22-alpine
 WORKDIR /app
-ENV NODE_ENV=production
+ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
 
-RUN addgroup --system --gid 1001 nodejs \
-  && adduser --system --uid 1001 nextjs
+# Next standalone output + static assets
+COPY --from=build /src/.next/standalone ./
+COPY --from=build /src/.next/static ./.next/static
+COPY --from=build /src/public ./public
 
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Prisma: schema + migrations + full node_modules (see fix #2 above) for
+# `migrate deploy` at startup. prisma.config.ts (root-level, not inside
+# prisma/) is what actually reads DATABASE_URL into datasource.url — without
+# it, `migrate deploy` fails at runtime with "the datasource.url property is
+# required" even though DATABASE_URL is correctly set in the environment,
+# because the CLI has no config file telling it to read that var at all.
+COPY --from=build /src/prisma ./prisma
+COPY --from=build /src/prisma.config.ts ./prisma.config.ts
+COPY --from=build /src/node_modules ./node_modules
 
-USER nextjs
-
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
 EXPOSE 3000
-
-CMD ["node", "server.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]
