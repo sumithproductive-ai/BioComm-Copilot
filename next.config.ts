@@ -7,6 +7,11 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
+  // Produces .next/standalone — a self-contained build (traced node_modules
+  // + a minimal server.js) sized for container deployment, so the runtime
+  // image doesn't need `npm install` or the full node_modules tree at all.
+  // See Dockerfile.
+  output: "standalone",
 };
 
 export default nextConfig;

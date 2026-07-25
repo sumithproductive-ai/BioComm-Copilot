@@ -1,0 +1,27 @@
+# Mirrors .gitignore for the most part, plus dev-only artifacts that would
+# otherwise bloat the build context or shadow what gets generated fresh
+# inside the image.
+
+node_modules
+.next
+
+# lib/generated/prisma is gitignored and regenerated fresh inside the deps
+# and builder stages (via `npm ci`'s postinstall, then `prisma generate`
+# again explicitly) — never copy a possibly-stale host-generated copy in.
+lib/generated/prisma
+
+.env
+.env.*
+!.env.example
+
+.git
+.gitignore
+Dockerfile
+.dockerignore
+
+.playwright-mcp
+*.log
+npm-debug.log*
+.DS_Store
+
+README.md

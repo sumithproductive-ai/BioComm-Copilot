@@ -1,0 +1,46 @@
+# Local verification only — proves the Dockerfile's image genuinely works
+# standalone (its own Postgres, no dependency on the host's native install),
+# not a deployment artifact itself. Azure deployment will point at Azure
+# Database for PostgreSQL via the same DATABASE_URL env var, not this file.
+#
+# Usage:
+#   docker compose up --build -d
+#   docker compose exec app npx prisma migrate deploy   # first run only
+#   open http://localhost:3000
+#   docker compose down -v                               # tear down + wipe data
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: biocomm
+      POSTGRES_PASSWORD: biocomm
+      POSTGRES_DB: biocomm_copilot
+    ports:
+      - "5433:5432" # host 5433 so it never collides with a native local Postgres on 5432
+    volumes:
+      - biocomm_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U biocomm -d biocomm_copilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3000" # host 3001 — the native `npm run dev` server already owns host 3000
+    environment:
+      DATABASE_URL: "postgresql://biocomm:biocomm@postgres:5432/biocomm_copilot"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY}"
+      LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY}"
+      LANGFUSE_BASEURL: "${LANGFUSE_BASEURL}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  biocomm_postgres_data:
