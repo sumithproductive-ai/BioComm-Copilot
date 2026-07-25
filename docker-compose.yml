@@ -1,13 +1,19 @@
 # Local verification only — proves the Dockerfile's image genuinely works
 # standalone (its own Postgres, no dependency on the host's native install),
-# not a deployment artifact itself. Azure deployment will point at Azure
-# Database for PostgreSQL via the same DATABASE_URL env var, not this file.
+# not a deployment artifact itself. Real deployment goes through
+# .github/workflows/deploy.yml against the shared cohort environment
+# (rg-students-platform), not this file.
 #
 # Usage:
 #   docker compose up --build -d
-#   docker compose exec app npx prisma migrate deploy   # first run only
 #   open http://localhost:3000
-#   docker compose down -v                               # tear down + wipe data
+#   docker compose down -v   # tear down + wipe data
+#
+# No manual migrate step needed — the Dockerfile's CMD runs
+# `prisma migrate deploy` automatically before the server starts, same as
+# it will in the real deployment (that's the whole reason it's structured
+# that way: in the real environment, the container is the only thing that
+# can reach the database at all).
 
 services:
   postgres:
