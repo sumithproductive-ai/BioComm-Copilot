@@ -13,12 +13,14 @@ import {
   getSourceIndex,
 } from "@/lib/agents/persist";
 import { computeEpistemicLedger } from "@/lib/memo/epistemic-ledger";
+import { isValidUuid } from "@/lib/memo/is-valid-uuid";
 import { AssessmentReportDocument } from "@/lib/pdf/assessment-report";
 
 // Same data, different rendering target as app/memo/[id]/page.tsx — reuses
 // every getter directly rather than re-deriving anything.
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  if (!isValidUuid(id)) notFound();
   const memoRun = await db.memoRun.findUnique({
     where: { id },
     select: { target: true, modality: true, stage: true, indication: true, context: true },

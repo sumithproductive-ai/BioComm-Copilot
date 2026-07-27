@@ -9,6 +9,7 @@ import {
   getKeyRisksAndRecommendations,
 } from "@/lib/agents/persist";
 import { computeEpistemicLedger } from "@/lib/memo/epistemic-ledger";
+import { isValidUuid } from "@/lib/memo/is-valid-uuid";
 import { CompareView, type ComparisonSide } from "@/components/compare-view";
 
 async function loadComparisonSide(id: string): Promise<ComparisonSide | null> {
@@ -60,7 +61,7 @@ export default async function ComparePage({
   const a = typeof params.a === "string" ? params.a : undefined;
   const b = typeof params.b === "string" ? params.b : undefined;
 
-  if (!a || !b) notFound();
+  if (!a || !b || !isValidUuid(a) || !isValidUuid(b)) notFound();
 
   const [sideA, sideB] = await Promise.all([loadComparisonSide(a), loadComparisonSide(b)]);
   if (!sideA || !sideB) notFound();
