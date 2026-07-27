@@ -15,6 +15,7 @@ import type {
   CitationRef,
 } from "./schemas";
 import type { AgentLiveStatus } from "./roster";
+import { deriveRunStatus, type RunStatus } from "@/lib/memo/run-status";
 
 // Story 9 AC: "If no flags were raised, the section states 'No critical
 // flags identified — standard human review still required'". This is
@@ -574,4 +575,78 @@ export async function getAgentProgress(memoRunId: string): Promise<AgentProgress
     where: { id: memoRunId },
     select: { assessmentStartedAt: true, agentProgress: true },
   });
+}
+
+// Assessments index (organization/browse view) — same lightweight-preview
+// shape as the MCP server's list_assessments/search_assessments_by_target
+// (app/api/[transport]/route.ts's ASSESSMENT_LIST_SELECT), plus agentProgress
+// status so the full four-state RunStatus (including Failed) can be derived,
+// which a decisionSummary check alone can't distinguish.
+const ASSESSMENT_LIST_SELECT = {
+  id: true,
+  target: true,
+  modality: true,
+  stage: true,
+  indication: true,
+  createdAt: true,
+  decisionSummary: {
+    select: { commercialOpportunity: true, confidenceScore: true, recommendedNextStep: true },
+  },
+  agentProgress: { select: { status: true } },
+} satisfies Prisma.MemoRunSelect;
+
+// confidenceScore is re-typed number (not Prisma.Decimal) because this list
+// is passed straight into a Client Component (components/assessments-table.tsx,
+// for the delete button) — Decimal instances aren't a plain object React can
+// serialize across that boundary, unlike the memo page's DecisionSummarySection
+// which stays server-side and converts with Number() only at render time.
+type AssessmentListRow = Prisma.MemoRunGetPayload<{ select: typeof ASSESSMENT_LIST_SELECT }>;
+export type AssessmentListItem = Omit<AssessmentListRow, "decisionSummary"> & {
+  decisionSummary: (Omit<NonNullable<AssessmentListRow["decisionSummary"]>, "confidenceScore"> & {
+    confidenceScore: number;
+  }) | null;
+  status: RunStatus;
+};
+
+// Status (Queued/In Progress/Complete/Failed) is derived, not a DB column
+// (lib/memo/run-status.ts), so filtering by it happens in JS after the fetch
+// rather than as a Prisma `where` — fine at this app's scale (one team's
+// assessments, not a multi-tenant table with thousands of rows).
+export async function listAssessments({
+  q,
+  status,
+  page = 1,
+  pageSize = 25,
+}: {
+  q?: string;
+  status?: RunStatus;
+  page?: number;
+  pageSize?: number;
+}): Promise<{ runs: AssessmentListItem[]; total: number }> {
+  const where: Prisma.MemoRunWhereInput | undefined = q
+    ? {
+        OR: [
+          { target: { contains: q, mode: "insensitive" } },
+          { indication: { contains: q, mode: "insensitive" } },
+        ],
+      }
+    : undefined;
+
+  const all = await db.memoRun.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    select: ASSESSMENT_LIST_SELECT,
+  });
+
+  const withStatus: AssessmentListItem[] = all.map((run) => ({
+    ...run,
+    decisionSummary: run.decisionSummary
+      ? { ...run.decisionSummary, confidenceScore: Number(run.decisionSummary.confidenceScore) }
+      : null,
+    status: deriveRunStatus(run),
+  }));
+  const filtered = status ? withStatus.filter((run) => run.status === status) : withStatus;
+
+  const start = (page - 1) * pageSize;
+  return { runs: filtered.slice(start, start + pageSize), total: filtered.length };
 }

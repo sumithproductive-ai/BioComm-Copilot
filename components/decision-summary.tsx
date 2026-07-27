@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { ConfidenceBreakdownChart } from "@/components/confidence-breakdown-chart";
 import type { DecisionSummaryRecord } from "@/lib/agents/persist";
 
 // USER_STORIES.md Story 3 AC: "Confidence Score derivation method is
@@ -164,17 +165,13 @@ export function DecisionSummarySection({ data }: { data: DecisionSummaryRecord }
         <summary className="cursor-pointer text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           How Confidence Score is calculated
         </summary>
-        <div className="mt-3 flex flex-col gap-1.5">
-          {CONFIDENCE_COMPONENTS.map((component) => (
-            <div key={component.key} className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">
-                {component.label} ({component.weight})
-              </span>
-              <span className="font-medium text-foreground">
-                {Number(summary[component.key]).toFixed(2)}
-              </span>
-            </div>
-          ))}
+        <div className="mt-3">
+          <ConfidenceBreakdownChart
+            data={CONFIDENCE_COMPONENTS.map((component) => ({
+              label: `${component.label} (${component.weight})`,
+              value: Number(summary[component.key]),
+            }))}
+          />
           <p className="mt-2 text-xs text-muted-foreground">
             A rule-based weighted average, computed in code from the other agents&apos; already-validated
             outputs — never an LLM-guessed number.
