@@ -31,9 +31,15 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <header className="border-b border-border bg-card">
-          <div className="mx-auto flex max-w-6xl items-center px-6 py-4">
+          <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
             <Link href="/">
               <Logo />
+            </Link>
+            <Link
+              href="/assessments"
+              className="text-sm font-medium text-muted-foreground hover:text-brand-navy"
+            >
+              Assessments
             </Link>
           </div>
         </header>

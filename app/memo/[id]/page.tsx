@@ -29,6 +29,7 @@ import { KeyRisksSection, RouteRecommendationsSection } from "@/components/key-r
 import { SourceIndexSection } from "@/components/source-index";
 import { EpistemicLedgerSection } from "@/components/epistemic-ledger";
 import { MemoToc, type MemoTocSection } from "@/components/memo-toc";
+import { CollapsibleSectionCard } from "@/components/collapsible-section-card";
 
 const CARD_CLASS =
   "mt-6 scroll-mt-6 [--card-spacing:1.75rem] rounded-2xl border border-border shadow-[0_1px_2px_rgba(15,31,61,0.04),0_12px_32px_-20px_rgba(15,31,61,0.18)]";
@@ -184,12 +185,22 @@ export default async function MemoRunPage({
                 {memoRun.modality} · {memoRun.stage} · {memoRun.indication}
               </p>
             </div>
-            <Link
-              href="/"
-              className="shrink-0 rounded-[9px] border border-border bg-white px-3 py-1.5 text-sm font-medium text-brand-navy hover:bg-slate-50"
-            >
-              + New Assessment
-            </Link>
+            <div className="flex shrink-0 items-center gap-2">
+              {hasDecisionSummary && (
+                <a
+                  href={`/memo/${memoRun.id}/pdf`}
+                  className="rounded-[9px] border border-border bg-white px-3 py-1.5 text-sm font-medium text-brand-navy hover:bg-slate-50"
+                >
+                  Download PDF
+                </a>
+              )}
+              <Link
+                href="/"
+                className="rounded-[9px] border border-border bg-white px-3 py-1.5 text-sm font-medium text-brand-navy hover:bg-slate-50"
+              >
+                + New Assessment
+              </Link>
+            </div>
           </div>
 
           {hasAnyResults && (
@@ -228,124 +239,73 @@ export default async function MemoRunPage({
           )}
 
           {hasDecisionSummary && decisionSummary && (
-            <Card id="decision-summary" className={cn(CARD_CLASS, "border-t-4 border-t-brand-navy")}>
-              <CardContent>
-                <h2 className="mb-4 text-[19px] font-bold text-brand-navy">
-                  Decision Summary
-                </h2>
-                <DecisionSummarySection data={decisionSummary} />
-              </CardContent>
-            </Card>
+            <CollapsibleSectionCard
+              id="decision-summary"
+              title="Decision Summary"
+              cardClassName="border-t-4 border-t-brand-navy"
+            >
+              <DecisionSummarySection data={decisionSummary} />
+            </CollapsibleSectionCard>
           )}
 
           {hasEpistemicLedger && (
-            <Card id="epistemic-ledger" className={CARD_CLASS}>
-              <CardContent>
-                <h2 className="mb-4 text-[19px] font-bold text-brand-navy">
-                  Epistemic Ledger
-                </h2>
-                <EpistemicLedgerSection data={epistemicLedger} />
-              </CardContent>
-            </Card>
+            <CollapsibleSectionCard id="epistemic-ledger" title="Epistemic Ledger">
+              <EpistemicLedgerSection data={epistemicLedger} />
+            </CollapsibleSectionCard>
           )}
 
           {hasClinicalResearch && clinicalLandscape && (
-            <Card id="clinical-landscape" className={CARD_CLASS}>
-              <CardContent>
-                <h2 className="mb-4 text-[19px] font-bold text-brand-navy">
-                  Clinical Landscape
-                </h2>
-                <ClinicalLandscapeSection data={clinicalLandscape} />
-              </CardContent>
-            </Card>
+            <CollapsibleSectionCard id="clinical-landscape" title="Clinical Landscape">
+              <ClinicalLandscapeSection data={clinicalLandscape} />
+            </CollapsibleSectionCard>
           )}
 
           {hasCompetitiveIntelligence && competitiveLandscape && (
-            <Card id="competitive-landscape" className={CARD_CLASS}>
-              <CardContent>
-                <h2 className="mb-4 text-[19px] font-bold text-brand-navy">
-                  Competitive Landscape
-                </h2>
-                <CompetitiveLandscapeSection data={competitiveLandscape} />
-              </CardContent>
-            </Card>
+            <CollapsibleSectionCard id="competitive-landscape" title="Competitive Landscape">
+              <CompetitiveLandscapeSection data={competitiveLandscape} />
+            </CollapsibleSectionCard>
           )}
 
           {hasCommercialOpportunity && commercialOpportunity && (
-            <Card id="commercial-opportunity" className={CARD_CLASS}>
-              <CardContent>
-                <h2 className="mb-4 text-[19px] font-bold text-brand-navy">
-                  Commercial Opportunity
-                </h2>
-                <CommercialOpportunitySection data={commercialOpportunity} />
-              </CardContent>
-            </Card>
+            <CollapsibleSectionCard id="commercial-opportunity" title="Commercial Opportunity">
+              <CommercialOpportunitySection data={commercialOpportunity} />
+            </CollapsibleSectionCard>
           )}
 
           {hasDealComparables && dealComparablesLandscape && (
-            <Card id="deal-comparables" className={CARD_CLASS}>
-              <CardContent>
-                <h2 className="mb-4 text-[19px] font-bold text-brand-navy">
-                  Deal Comparables
-                </h2>
-                <DealComparablesSection data={dealComparablesLandscape} />
-              </CardContent>
-            </Card>
+            <CollapsibleSectionCard id="deal-comparables" title="Deal Comparables">
+              <DealComparablesSection data={dealComparablesLandscape} />
+            </CollapsibleSectionCard>
           )}
 
           {hasRegulatory && regulatoryLandscape && (
-            <Card id="regulatory-pathway" className={CARD_CLASS}>
-              <CardContent>
-                <h2 className="mb-4 text-[19px] font-bold text-brand-navy">
-                  Regulatory Pathway
-                </h2>
-                <RegulatoryLandscapeSection data={regulatoryLandscape} />
-              </CardContent>
-            </Card>
+            <CollapsibleSectionCard id="regulatory-pathway" title="Regulatory Pathway">
+              <RegulatoryLandscapeSection data={regulatoryLandscape} />
+            </CollapsibleSectionCard>
           )}
 
           {hasKeyRisks && keyRisksAndRecommendations && (
-            <Card id="key-risks" className={CARD_CLASS}>
-              <CardContent>
-                <h2 className="mb-4 text-[19px] font-bold text-brand-navy">
-                  Key Risks
-                </h2>
-                <KeyRisksSection data={keyRisksAndRecommendations} />
-              </CardContent>
-            </Card>
+            <CollapsibleSectionCard id="key-risks" title="Key Risks">
+              <KeyRisksSection data={keyRisksAndRecommendations} />
+            </CollapsibleSectionCard>
           )}
 
           {hasRouteRecommendations && keyRisksAndRecommendations && (
-            <Card id="route-recommendations" className={CARD_CLASS}>
-              <CardContent>
-                <h2 className="mb-4 text-[19px] font-bold text-brand-navy">
-                  Preliminary Route Recommendations
-                </h2>
-                <RouteRecommendationsSection data={keyRisksAndRecommendations} />
-              </CardContent>
-            </Card>
+            <CollapsibleSectionCard id="route-recommendations" title="Preliminary Route Recommendations">
+              <RouteRecommendationsSection data={keyRisksAndRecommendations} />
+            </CollapsibleSectionCard>
           )}
 
           {hasReviewerNotes && reviewerNotes && (
-            <Card id="reviewer-notes" className={CARD_CLASS}>
-              <CardContent>
-                <h2 className="mb-4 text-[19px] font-bold text-brand-navy">
-                  Reviewer Notes
-                </h2>
-                <ReviewerNotesSection data={reviewerNotes} />
-              </CardContent>
-            </Card>
+            <CollapsibleSectionCard id="reviewer-notes" title="Reviewer Notes">
+              <ReviewerNotesSection data={reviewerNotes} />
+            </CollapsibleSectionCard>
           )}
 
           {hasSourceIndex && (
-            <Card id="source-index" className={CARD_CLASS}>
-              <CardContent>
-                <h2 className="mb-4 text-[19px] font-bold text-brand-navy">
-                  Source Index ({sourceIndex.length})
-                </h2>
-                <SourceIndexSection citations={sourceIndex} />
-              </CardContent>
-            </Card>
+            <CollapsibleSectionCard id="source-index" title={`Source Index (${sourceIndex.length})`}>
+              <SourceIndexSection citations={sourceIndex} />
+            </CollapsibleSectionCard>
           )}
         </div>
       </div>
