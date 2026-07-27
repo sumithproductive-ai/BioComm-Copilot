@@ -30,6 +30,7 @@ import { SourceIndexSection } from "@/components/source-index";
 import { EpistemicLedgerSection } from "@/components/epistemic-ledger";
 import { MemoToc, type MemoTocSection } from "@/components/memo-toc";
 import { CollapsibleSectionCard } from "@/components/collapsible-section-card";
+import { isValidUuid } from "@/lib/memo/is-valid-uuid";
 
 const CARD_CLASS =
   "mt-6 scroll-mt-6 [--card-spacing:1.75rem] rounded-2xl border border-border shadow-[0_1px_2px_rgba(15,31,61,0.04),0_12px_32px_-20px_rgba(15,31,61,0.18)]";
@@ -40,6 +41,9 @@ export default async function MemoRunPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  if (!isValidUuid(id)) {
+    notFound();
+  }
   const memoRun = await db.memoRun.findUnique({ where: { id } });
 
   if (!memoRun) {
