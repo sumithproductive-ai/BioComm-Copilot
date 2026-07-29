@@ -63,7 +63,11 @@ export const trialSchema = z.object({
   sponsor: z.string(),
   enrollment: z.number().int().positive().optional(),
   primaryEndpoint: z.string().optional(),
-  isStale: z.boolean().default(false),
+  // No .default(false) — a silent fallback works against a staleness
+  // guarantee. The model must always state this explicitly (already implied
+  // by the prompt's "every field must be present" rule; this just removes
+  // the schema-level escape hatch).
+  isStale: z.boolean(),
   citation: citationRefSchema,
 });
 
@@ -73,17 +77,20 @@ export const mechanismOfActionSchema = z.object({
   citations: z.array(citationRefSchema).min(1),
 });
 
+// citation is required, not optional — a safety signal or drug-failure
+// claim with no source doesn't get submitted at all (see the agent's system
+// prompt: omit the entry rather than submit uncited or invent a source).
 export const safetySignalSchema = z.object({
   description: z.string(),
   label: claimLabelSchema,
-  citation: citationRefSchema.optional(),
+  citation: citationRefSchema,
 });
 
 export const similarDrugFailureSchema = z.object({
   drug: z.string(),
   reasonForFailure: z.string(),
   label: claimLabelSchema,
-  citation: citationRefSchema.optional(),
+  citation: citationRefSchema,
 });
 
 export const clinicalResearchOutputSchema = z.object({
