@@ -66,6 +66,13 @@ enum CompStrength {
   Approximate
 }
 
+enum PatentStatus {
+  Granted
+  Pending
+  Expired
+  Abandoned
+}
+
 enum SourceType {
   ClinicalTrialsGov
   Pubmed
@@ -154,6 +161,12 @@ model MemoRun {
   hasCriticalFlags     Boolean @default(false)
   reviewerNotesSummary String?
 
+  // Patents (singleton per-run summary; individual patents are their own
+  // table) — informational only, deliberately not part of the Confidence
+  // Score formula (see synthesis.ts)
+  patentLandscapeSummary String?
+  patentLandscapeLabel   ClaimLabel?
+
   decisionSummary DecisionSummary?
 
   citations               Citation[]
@@ -173,6 +186,7 @@ model MemoRun {
   keyRisks                KeyRisk[]
   routeRecommendations    RouteRecommendation[]
   agentProgress           AgentProgress[]
+  patents                 Patent[]
 
   @@map("memo_run")
 }
@@ -231,6 +245,7 @@ model Citation {
   priorApprovals             PriorApproval[]
   endpointPrecedentCitations EndpointPrecedentCitation[]
   keyRisks                   KeyRisk[]
+  patents                    Patent[]
 
   @@map("citation")
 }
@@ -499,4 +514,28 @@ model AgentProgress {
 
   @@unique([memoRunId, agentName])
   @@map("agent_progress")
+}
+
+// ---------------------------------------------------------------------------
+// Patent Agent (6th research agent — added post-launch, EPO OPS as the data
+// source) — informational only, not part of the Confidence Score formula.
+// ---------------------------------------------------------------------------
+
+model Patent {
+  id         String    @id @default(uuid()) @db.Uuid
+  memoRunId  String    @db.Uuid
+  memoRun    MemoRun   @relation(fields: [memoRunId], references: [id], onDelete: Cascade)
+  citationId String?   @db.Uuid
+  citation   Citation? @relation(fields: [citationId], references: [id])
+
+  patentNumber    String
+  title           String
+  applicant       String
+  filingDate      DateTime?    @db.Date
+  publicationDate DateTime?    @db.Date
+  status          PatentStatus
+  relevance       String
+  label           ClaimLabel
+
+  @@map("patent")
 }

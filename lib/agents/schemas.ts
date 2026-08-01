@@ -182,6 +182,36 @@ export const commercialOpportunityOutputSchema = z.object({
 export type CommercialOpportunityOutput = z.infer<typeof commercialOpportunityOutputSchema>;
 
 // ---------------------------------------------------------------------------
+// Patent Agent — 6th research agent, added post-launch per an explicit
+// product decision that patent value deserves the same weight as
+// competitive/commercial analysis, not a bolt-on field on another agent.
+// Informational only by design: does NOT feed the Confidence Score formula
+// (see synthesis.ts) — a deliberate choice to avoid changing what past and
+// future Confidence Scores mean.
+// ---------------------------------------------------------------------------
+
+export const patentSchema = z.object({
+  patentNumber: z.string(),
+  title: z.string(),
+  applicant: z.string(),
+  filingDate: z.iso.date().optional(),
+  publicationDate: z.iso.date().optional(),
+  status: z.enum(["Granted", "Pending", "Expired", "Abandoned"]),
+  relevance: z.string(),
+  label: claimLabelSchema,
+  citation: citationRefSchema,
+});
+
+export const patentOutputSchema = z.object({
+  patents: z.array(patentSchema),
+  landscapeSummary: z.object({
+    summary: z.string(),
+    label: claimLabelSchema,
+  }),
+});
+export type PatentOutput = z.infer<typeof patentOutputSchema>;
+
+// ---------------------------------------------------------------------------
 // Deal Comparables Agent — AGENT_PLAN.md §4.5
 // ---------------------------------------------------------------------------
 
@@ -323,6 +353,7 @@ export const agentNameSchema = z.enum([
   "commercial",
   "dealComparables",
   "regulatory",
+  "patents",
   "critic",
   "synthesis",
 ]);
@@ -335,5 +366,6 @@ export const researchOutputsSchema = z.object({
   commercial: commercialOpportunityOutputSchema.nullable(),
   dealComparables: dealComparablesOutputSchema.nullable(),
   regulatory: regulatoryOutputSchema.nullable(),
+  patents: patentOutputSchema.nullable(),
 });
 export type ResearchOutputs = z.infer<typeof researchOutputsSchema>;

@@ -7,6 +7,7 @@ import {
   getCommercialOpportunity,
   getRegulatoryLandscape,
   getDealComparablesLandscape,
+  getPatentLandscape,
   getReviewerNotes,
   getDecisionSummary,
   getKeyRisksAndRecommendations,
@@ -23,6 +24,7 @@ import { CompetitiveLandscapeSection } from "@/components/competitive-landscape"
 import { CommercialOpportunitySection } from "@/components/commercial-opportunity";
 import { RegulatoryLandscapeSection } from "@/components/regulatory-landscape";
 import { DealComparablesSection } from "@/components/deal-comparables";
+import { PatentLandscapeSection } from "@/components/patent-landscape";
 import { ReviewerNotesSection } from "@/components/reviewer-notes";
 import { DecisionSummarySection } from "@/components/decision-summary";
 import { KeyRisksSection, RouteRecommendationsSection } from "@/components/key-risks";
@@ -56,6 +58,7 @@ export default async function MemoRunPage({
     commercialOpportunity,
     regulatoryLandscape,
     dealComparablesLandscape,
+    patentLandscape,
     reviewerNotes,
     decisionSummary,
     keyRisksAndRecommendations,
@@ -67,6 +70,7 @@ export default async function MemoRunPage({
     getCommercialOpportunity(id),
     getRegulatoryLandscape(id),
     getDealComparablesLandscape(id),
+    getPatentLandscape(id),
     getReviewerNotes(id),
     getDecisionSummary(id),
     getKeyRisksAndRecommendations(id),
@@ -97,6 +101,9 @@ export default async function MemoRunPage({
   const hasDealComparables =
     !!dealComparablesLandscape &&
     (dealComparablesLandscape.noCompFound || dealComparablesLandscape.comparableDeals.length > 0);
+  const hasPatents =
+    !!patentLandscape &&
+    (!!patentLandscape.patentLandscapeSummary || patentLandscape.patents.length > 0);
   // Exactly one of these is set once Critic has actually run (empty-flags
   // runs get the standard-line summary; non-empty runs get flags instead —
   // see persistCriticOutput) — reliably distinguishes "Critic hasn't run
@@ -113,7 +120,8 @@ export default async function MemoRunPage({
     hasCompetitiveIntelligence ||
     hasCommercialOpportunity ||
     hasRegulatory ||
-    hasDealComparables;
+    hasDealComparables ||
+    hasPatents;
   // Data only persists once the whole Orchestrator run resolves (Story 2 is
   // live *status*, not streamed partial content) — so during a run
   // hasAnyResults stays false the whole time. hasStartedRun is what
@@ -142,6 +150,7 @@ export default async function MemoRunPage({
     hasCommercialOpportunity && { id: "commercial-opportunity", label: "Commercial Opportunity" },
     hasDealComparables && { id: "deal-comparables", label: "Deal Comparables" },
     hasRegulatory && { id: "regulatory-pathway", label: "Regulatory Pathway" },
+    hasPatents && { id: "patent-landscape", label: "Patent Landscape" },
     hasKeyRisks && { id: "key-risks", label: "Key Risks" },
     hasRouteRecommendations && { id: "route-recommendations", label: "Route Recommendations" },
     hasReviewerNotes && { id: "reviewer-notes", label: "Reviewer Notes" },
@@ -284,6 +293,12 @@ export default async function MemoRunPage({
           {hasRegulatory && regulatoryLandscape && (
             <CollapsibleSectionCard id="regulatory-pathway" title="Regulatory Pathway">
               <RegulatoryLandscapeSection data={regulatoryLandscape} />
+            </CollapsibleSectionCard>
+          )}
+
+          {hasPatents && patentLandscape && (
+            <CollapsibleSectionCard id="patent-landscape" title="Patent Landscape">
+              <PatentLandscapeSection data={patentLandscape} />
             </CollapsibleSectionCard>
           )}
 

@@ -66,3 +66,9 @@ export const clinicalTrialsLimiter = createRateLimiter({ maxConcurrent: 3, minIn
 // conservative-pacing reasoning as the other two, and this one's shared
 // by two agents (Deal Comparables + Competitive Intelligence) at once.
 export const secEdgarLimiter = createRateLimiter({ maxConcurrent: 3, minIntervalMs: 300 });
+
+// EPO OPS enforces its own "Fair Use policy" server-side (confirmed live —
+// an unauthenticated request gets a 403 specifically citing it) on top of
+// per-week quota tiers tied to the registered app — conservative client-side
+// pacing on top of that, same reasoning as the other three.
+export const epoPatentsLimiter = createRateLimiter({ maxConcurrent: 2, minIntervalMs: 500 });

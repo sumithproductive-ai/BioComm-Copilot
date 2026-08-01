@@ -10,6 +10,7 @@ import type {
   CommercialOpportunityOutput,
   RegulatoryOutput,
   DealComparablesOutput,
+  PatentOutput,
   CriticOutput,
   SynthesisOutput,
   CitationRef,
@@ -337,6 +338,57 @@ export async function getDealComparablesLandscape(
       noCompFound: true,
       noCompExplanation: true,
       comparableDeals: { include: { citation: true } },
+    },
+  });
+}
+
+// Patent Agent (6th research agent, informational only — see synthesis.ts's
+// comment on why it's deliberately excluded from the Confidence Score).
+export async function persistPatentOutput(memoRunId: string, output: PatentOutput): Promise<void> {
+  await db.$transaction(async (tx) => {
+    await tx.memoRun.update({
+      where: { id: memoRunId },
+      data: {
+        patentLandscapeSummary: output.landscapeSummary.summary,
+        patentLandscapeLabel: output.landscapeSummary.label,
+      },
+    });
+
+    for (const patent of output.patents) {
+      const citation = await createCitation(tx, memoRunId, patent.citation);
+      await tx.patent.create({
+        data: {
+          memoRunId,
+          citationId: citation.id,
+          patentNumber: patent.patentNumber,
+          title: patent.title,
+          applicant: patent.applicant,
+          filingDate: patent.filingDate ? new Date(patent.filingDate) : undefined,
+          publicationDate: patent.publicationDate ? new Date(patent.publicationDate) : undefined,
+          status: patent.status,
+          relevance: patent.relevance,
+          label: patent.label,
+        },
+      });
+    }
+  });
+}
+
+export type PatentLandscape = Prisma.MemoRunGetPayload<{
+  select: {
+    patentLandscapeSummary: true;
+    patentLandscapeLabel: true;
+    patents: { include: { citation: true } };
+  };
+}>;
+
+export async function getPatentLandscape(memoRunId: string): Promise<PatentLandscape | null> {
+  return db.memoRun.findUnique({
+    where: { id: memoRunId },
+    select: {
+      patentLandscapeSummary: true,
+      patentLandscapeLabel: true,
+      patents: { include: { citation: true } },
     },
   });
 }
