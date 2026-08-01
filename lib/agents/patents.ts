@@ -10,6 +10,7 @@ import type { LangfuseSpanClient } from "langfuse";
 import { patentOutputSchema, type PatentOutput } from "./schemas";
 import { epoPatentSearchToolDefinition, searchPatents } from "./tools/epo-patents";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { formatReviewerFeedback } from "./reviewer-feedback";
 
 const client = new Anthropic();
 
@@ -59,6 +60,9 @@ export type PatentsInput = {
   modality: string;
   indication: string;
   context?: string;
+  // Deep Research Mode only (orchestrator.ts) — Critic's flags against this
+  // agent's prior pass, fed back for a targeted second pass.
+  reviewerFeedback?: string[];
 };
 
 function isToolUseBlock(block: Anthropic.ContentBlock): block is Anthropic.ToolUseBlock {
@@ -96,7 +100,7 @@ Modality: ${input.modality}
 Indication: ${input.indication}
 ${input.context ? `Additional context: ${input.context}` : ""}
 
-Today's date is ${today}. Use search_patents to gather real data before calling submit_findings.`,
+Today's date is ${today}. Use search_patents to gather real data before calling submit_findings.${formatReviewerFeedback(input.reviewerFeedback)}`,
     },
   ];
 

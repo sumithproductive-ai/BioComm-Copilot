@@ -57,6 +57,7 @@ const SECTION_TO_AGENT_KEY: Partial<Record<string, keyof ResearchOutputs>> = {
   "Commercial Opportunity": "commercial",
   Regulatory: "regulatory",
   "Deal Comparables": "dealComparables",
+  "Patent Landscape": "patents",
 };
 
 // Story 2 — reports live status transitions as they happen, separate from
@@ -472,6 +473,24 @@ export async function runOrchestrator(
             agentStatuses.dealComparables = result.status;
             researchOutputs.dealComparables = result.output;
             agentNotes.dealComparables = "Deep research: revised after reviewer feedback";
+          }
+        })
+      );
+    }
+
+    const patentsFeedback = flagsByAgent.get("patents");
+    if (patentsFeedback) {
+      deepResearchTasks.push(
+        runWithRetries(
+          runTrace,
+          "patents",
+          (span) => runPatentsAgent({ ...patentsInput, reviewerFeedback: patentsFeedback }, span),
+          onAgentStatusChange
+        ).then((result) => {
+          if (result.status === "complete") {
+            agentStatuses.patents = result.status;
+            researchOutputs.patents = result.output;
+            agentNotes.patents = "Deep research: revised after reviewer feedback";
           }
         })
       );

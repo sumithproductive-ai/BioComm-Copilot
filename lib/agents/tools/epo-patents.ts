@@ -15,19 +15,37 @@
 // registration at https://developers.epo.org, same shape as the Google
 // OAuth credential step: a manual, one-time step that can't be automated.
 //
-// One thing NOT yet verified live (needs real credentials to test): the
-// exact shape of a successful search response body. OPS's JSON responses
-// nest results under ops:world-patent-data -> ops:biblio-search ->
-// ops:search-result -> exchange-documents[] per its documented schema —
-// the parsing below follows that structure, but treat it as a
-// best-first-pass, not confirmed, until tested against a real response.
+// Live-verified against real credentials (2026-08-01) — and this caught a
+// real bug the "best-first-pass" parser had wrong, not just confirmed it:
+//   - The plain /published-data/search endpoint (what this file originally
+//     used) returns only a bare list of publication references (just
+//     document IDs) — no title, no applicant, no dates. A real query for
+//     "pa=AbbVie" returned @total-result-count: 1629 (proving the query
+//     and auth were both fine) but parsed to zero usable results, because
+//     the response genuinely doesn't carry bibliographic data at that path.
+//   - The fix: /published-data/search/biblio (the "biblio" constituent)
+//     returns full exchange-document records instead. Confirmed live: a
+//     "ta=risankizumab" query against this path returned real
+//     invention-title/parties/applicant-name data.
+//   - The results also nest one level deeper than assumed:
+//     ops:search-result.exchange-documents (plural, an array) of
+//     { "exchange-document": {...} } wrapper objects — not
+//     ops:search-result.exchange-document directly.
+//   - Each applicant appears twice per data-format ("epodoc", all-caps
+//     with a bracketed country suffix like "ABBVIE INC [US]", vs.
+//     "original", human-readable like "AbbVie Inc.") — prefer "original"
+//     when present for a cleaner display name.
+// Separately confirmed: a zero-match query returns HTTP 404 with an XML
+// SERVER.EntityNotFound fault body, not a 200 with an empty result set —
+// an unusual REST convention, but confirmed, not guessed. searchPatents
+// treats that specific case as "no results" (returns []), not an error.
 
 import type Anthropic from "@anthropic-ai/sdk";
 import { fetchWithRetry } from "./fetch-with-retry";
 import { epoPatentsLimiter } from "./rate-limiter";
 
 const AUTH_URL = "https://ops.epo.org/3.2/auth/accesstoken";
-const SEARCH_URL = "https://ops.epo.org/3.2/rest-services/published-data/search";
+const SEARCH_URL = "https://ops.epo.org/3.2/rest-services/published-data/search/biblio";
 
 export const epoPatentSearchToolDefinition: Anthropic.Tool = {
   name: "search_patents",
@@ -105,12 +123,17 @@ function buildQuery(input: { applicant?: string; keyword?: string }): string {
   return clauses.join(" and ");
 }
 
-// Best-first-pass parser per OPS's documented exchange-documents JSON
-// structure — flagged in the file header as needing live verification once
-// real credentials exist. Defensive throughout (optional chaining, no
-// assumed-present fields) so a structural surprise fails soft (empty
-// results) rather than throwing and taking down the whole agent call.
+// Parser for the real /biblio response shape, confirmed live (see file
+// header) — not the originally-guessed shape. Defensive throughout
+// (optional chaining, no assumed-present fields) so a structural surprise
+// fails soft (empty results) rather than throwing and taking down the
+// whole agent call.
 function parseSearchResponse(data: unknown): PatentSearchResult[] {
+  type ApplicantEntry = {
+    "@data-format"?: string;
+    "applicant-name"?: { name?: { $?: string } };
+  };
+
   type ExchangeDocument = {
     "@doc-number"?: string;
     "@country"?: string;
@@ -118,7 +141,7 @@ function parseSearchResponse(data: unknown): PatentSearchResult[] {
     "bibliographic-data"?: {
       "invention-title"?: { $?: string } | { $?: string }[];
       parties?: {
-        applicants?: { applicant?: { "applicant-name"?: { name?: { $?: string } } } | Array<unknown> };
+        applicants?: { applicant?: ApplicantEntry | ApplicantEntry[] };
       };
       "publication-reference"?: {
         "document-id"?: { date?: { $?: string } } | Array<{ date?: { $?: string } }>;
@@ -126,21 +149,27 @@ function parseSearchResponse(data: unknown): PatentSearchResult[] {
     };
   };
 
+  // Each real result is { "exchange-document": ExchangeDocument }, not the
+  // ExchangeDocument directly — confirmed live, see file header.
+  type ExchangeDocumentWrapper = { "exchange-document"?: ExchangeDocument };
+
   type SearchResponse = {
     "ops:world-patent-data"?: {
       "ops:biblio-search"?: {
         "ops:search-result"?: {
-          "exchange-document"?: ExchangeDocument | ExchangeDocument[];
+          // Plural key, confirmed live — not "exchange-document" (singular).
+          "exchange-documents"?: ExchangeDocumentWrapper | ExchangeDocumentWrapper[];
         };
       };
     };
   };
 
-  const rawDocuments = (data as SearchResponse)["ops:world-patent-data"]?.["ops:biblio-search"]?.[
+  const rawWrappers = (data as SearchResponse)["ops:world-patent-data"]?.["ops:biblio-search"]?.[
     "ops:search-result"
-  ]?.["exchange-document"];
-  const documents: ExchangeDocument[] =
-    rawDocuments === undefined ? [] : Array.isArray(rawDocuments) ? rawDocuments : [rawDocuments];
+  ]?.["exchange-documents"];
+  const wrappers: ExchangeDocumentWrapper[] =
+    rawWrappers === undefined ? [] : Array.isArray(rawWrappers) ? rawWrappers : [rawWrappers];
+  const documents = wrappers.map((w) => w["exchange-document"]).filter((d): d is ExchangeDocument => !!d);
 
   return documents.map((doc): PatentSearchResult => {
     const docNumber = doc["@doc-number"] ?? "";
@@ -151,11 +180,19 @@ function parseSearchResponse(data: unknown): PatentSearchResult[] {
     const titleField = doc["bibliographic-data"]?.["invention-title"];
     const title = Array.isArray(titleField) ? (titleField[0]?.$ ?? "") : (titleField?.$ ?? "");
 
+    // OPS lists each applicant twice, once per data-format: "epodoc"
+    // (all-caps, bracketed country code, e.g. "ABBVIE INC [US]") and
+    // "original" (human-readable, e.g. "AbbVie Inc."). Prefer "original"
+    // when present, confirmed live against a real multi-entry response.
     const applicantData = doc["bibliographic-data"]?.parties?.applicants?.applicant;
-    const firstApplicant = Array.isArray(applicantData) ? applicantData[0] : applicantData;
-    const applicant =
-      (firstApplicant as { "applicant-name"?: { name?: { $?: string } } })?.["applicant-name"]?.name
-        ?.$ ?? "";
+    const applicantList = Array.isArray(applicantData)
+      ? applicantData
+      : applicantData
+        ? [applicantData]
+        : [];
+    const preferredApplicant =
+      applicantList.find((a) => a["@data-format"] === "original") ?? applicantList[0];
+    const applicant = preferredApplicant?.["applicant-name"]?.name?.$ ?? "";
 
     const pubRef = doc["bibliographic-data"]?.["publication-reference"]?.["document-id"];
     const pubRefFirst = Array.isArray(pubRef) ? pubRef[0] : pubRef;
@@ -196,7 +233,16 @@ export async function searchPatents(input: {
     })
   );
   if (!res.ok) {
-    throw new Error(`EPO OPS search error: ${res.status} ${res.statusText} — ${await res.text()}`);
+    // OPS's real, confirmed behavior for a zero-match query: HTTP 404 with
+    // an XML SERVER.EntityNotFound fault body — not a 200 with an empty
+    // result set. Treat that specific case as "no results," not a real
+    // error; anything else (auth failure, malformed query, rate limit,
+    // server error) still throws.
+    const body = await res.text();
+    if (res.status === 404 && body.includes("SERVER.EntityNotFound")) {
+      return [];
+    }
+    throw new Error(`EPO OPS search error: ${res.status} ${res.statusText} — ${body}`);
   }
   const data = await res.json();
   return parseSearchResponse(data);

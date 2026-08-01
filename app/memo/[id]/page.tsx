@@ -239,8 +239,9 @@ export default async function MemoRunPage({
                   <>
                     {!hasStartedRun && (
                       <p className="text-sm text-muted-foreground">
-                        5 research agents run concurrently against live ClinicalTrials.gov, PubMed, and web
-                        search data, then Critic review, then Synthesis — not a demo.
+                        6 research agents run concurrently against live ClinicalTrials.gov, PubMed, SEC
+                        EDGAR, EPO patent data, and web search, then Critic review, then Synthesis — not a
+                        demo.
                       </p>
                     )}
                     <AgentProgressSection memoRunId={memoRun.id} initialData={agentProgress} />

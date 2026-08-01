@@ -19,6 +19,7 @@ import {
   persistCommercialOpportunityOutput,
   persistRegulatoryOutput,
   persistDealComparablesOutput,
+  persistPatentOutput,
   persistCriticOutput,
   persistSynthesisOutput,
 } from "./persist";
@@ -89,6 +90,9 @@ export async function executeAssessmentRun(
     }
     if (manifest.researchOutputs.dealComparables) {
       await persistDealComparablesOutput(memoRunId, manifest.researchOutputs.dealComparables);
+    }
+    if (manifest.researchOutputs.patents) {
+      await persistPatentOutput(memoRunId, manifest.researchOutputs.patents);
     }
     if (manifest.criticOutput) {
       await persistCriticOutput(memoRunId, manifest.criticOutput);
