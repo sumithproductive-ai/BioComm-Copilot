@@ -3,7 +3,7 @@ import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/
 import { cn } from "@/lib/utils";
 
 const CARD_CLASS =
-  "mt-6 scroll-mt-6 [--card-spacing:1.75rem] rounded-2xl border border-border shadow-[0_1px_2px_rgba(15,31,61,0.04),0_12px_32px_-20px_rgba(15,31,61,0.18)]";
+  "mt-4 scroll-mt-4 [--card-spacing:1.25rem] rounded-2xl border border-border shadow-[0_1px_2px_rgba(15,31,61,0.04),0_12px_32px_-20px_rgba(15,31,61,0.18)]";
 
 // Every memo section card gets its own single-item Accordion (default open)
 // rather than one shared Accordion across all sections — sections are
