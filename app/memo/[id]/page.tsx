@@ -33,7 +33,7 @@ import { CollapsibleSectionCard } from "@/components/collapsible-section-card";
 import { isValidUuid } from "@/lib/memo/is-valid-uuid";
 
 const CARD_CLASS =
-  "mt-6 scroll-mt-6 [--card-spacing:1.75rem] rounded-2xl border border-border shadow-[0_1px_2px_rgba(15,31,61,0.04),0_12px_32px_-20px_rgba(15,31,61,0.18)]";
+  "mt-4 scroll-mt-4 [--card-spacing:1.25rem] rounded-2xl border border-border shadow-[0_1px_2px_rgba(15,31,61,0.04),0_12px_32px_-20px_rgba(15,31,61,0.18)]";
 
 export default async function MemoRunPage({
   params,
@@ -162,7 +162,7 @@ export default async function MemoRunPage({
           </div>
         )}
 
-        <div className="w-full max-w-2xl">
+        <div className="w-full max-w-3xl">
           <RecordRecentRun
             run={{
               id: memoRun.id,
@@ -225,14 +225,8 @@ export default async function MemoRunPage({
                   <>
                     {!hasStartedRun && (
                       <p className="text-sm text-muted-foreground">
-                        All 5 research agents, the Critic Agent, and the Synthesis
-                        Agent are wired up — Clinical Research, Competitive
-                        Intelligence, Commercial Opportunity, Regulatory, Deal
-                        Comparables, an adversarial review pass, and final memo
-                        compilation. This runs five real research agents
-                        concurrently against live ClinicalTrials.gov, PubMed, and
-                        web search data, then Critic review, then Synthesis — not
-                        a demo.
+                        5 research agents run concurrently against live ClinicalTrials.gov, PubMed, and web
+                        search data, then Critic review, then Synthesis — not a demo.
                       </p>
                     )}
                     <AgentProgressSection memoRunId={memoRun.id} initialData={agentProgress} />

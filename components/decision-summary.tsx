@@ -86,7 +86,7 @@ function StatTile({
   return (
     <a
       href={href}
-      className="flex flex-col gap-1 rounded-[9px] border border-border bg-white px-4 py-3 transition-colors hover:border-brand-navy/30"
+      className="flex flex-col gap-0.5 rounded-[9px] border border-border bg-white px-3 py-2 transition-colors hover:border-brand-navy/30"
     >
       <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         {label}
@@ -105,20 +105,12 @@ export function DecisionSummarySection({ data }: { data: DecisionSummaryRecord }
   const band = SIGNAL_BANDS[bandIndex];
 
   return (
-    <div className="flex flex-col gap-4">
-      {(data.asOfDate || data.elapsedMs != null) && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          {data.asOfDate && <span>As of {formatAsOfDate(data.asOfDate)}</span>}
-          {data.asOfDate && data.elapsedMs != null && <span aria-hidden>·</span>}
-          {data.elapsedMs != null && <span>{formatElapsedLabel(data.elapsedMs)}</span>}
-        </div>
-      )}
-
-      <div className="flex items-center gap-3">
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="shrink-0 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           Overall Signal
         </span>
-        <div className="flex flex-1 gap-1">
+        <div className="flex min-w-20 flex-1 gap-1">
           {SIGNAL_BANDS.map((segment, i) => (
             <div
               key={segment.label}
@@ -127,9 +119,16 @@ export function DecisionSummarySection({ data }: { data: DecisionSummaryRecord }
           ))}
         </div>
         <span className={cn("shrink-0 text-sm font-semibold", band.textClass)}>{band.label}</span>
+        {(data.asOfDate || data.elapsedMs != null) && (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {data.asOfDate && `As of ${formatAsOfDate(data.asOfDate)}`}
+            {data.asOfDate && data.elapsedMs != null && " · "}
+            {data.elapsedMs != null && formatElapsedLabel(data.elapsedMs)}
+          </span>
+        )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <StatTile href="#commercial-opportunity" label="Commercial Opportunity">
           <Badge
             variant="outline"
@@ -151,7 +150,7 @@ export function DecisionSummarySection({ data }: { data: DecisionSummaryRecord }
 
       <a
         href="#key-risks"
-        className="flex items-center justify-between rounded-[9px] border border-border bg-white px-4 py-3 transition-colors hover:border-brand-navy/30"
+        className="flex items-center justify-between rounded-[9px] border border-border bg-white px-3 py-2 transition-colors hover:border-brand-navy/30"
       >
         <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           Recommended Next Step
@@ -161,11 +160,11 @@ export function DecisionSummarySection({ data }: { data: DecisionSummaryRecord }
         </Badge>
       </a>
 
-      <details className="rounded-[9px] border border-border bg-white px-4 py-3">
+      <details className="rounded-[9px] border border-border bg-white px-3 py-2">
         <summary className="cursor-pointer text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           How Confidence Score is calculated
         </summary>
-        <div className="mt-3">
+        <div className="mt-2">
           <ConfidenceBreakdownChart
             data={CONFIDENCE_COMPONENTS.map((component) => ({
               label: `${component.label} (${component.weight})`,
