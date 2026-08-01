@@ -43,7 +43,13 @@ export const sourceTypeSchema = z.enum([
 // persistence layer upserts a `citation` row from this and links the FK.
 export const citationRefSchema = z.object({
   sourceType: sourceTypeSchema,
-  sourceUrl: z.url(),
+  // z.httpUrl(), not z.url() — every citation URL is rendered directly as
+  // <a href={citation.sourceUrl}> across the memo UI (source-index.tsx and
+  // every landscape component). z.url() accepts any URI scheme, including
+  // javascript:/data: — since these strings are LLM-produced (from web_search
+  // results, which can include adversarial page content), restricting to
+  // http/https is a real, cheap defense-in-depth fix, not just style.
+  sourceUrl: z.httpUrl(),
   externalId: z.string().optional(),
   accessedDate: z.iso.date(),
   publishedDate: z.iso.date().optional(),
@@ -211,7 +217,9 @@ export type DealComparablesOutput = z.infer<typeof dealComparablesOutputSchema>;
 
 export const guidanceDocumentSchema = z.object({
   title: z.string(),
-  url: z.url(),
+  // z.httpUrl(), not z.url() — same reasoning as citationRefSchema.sourceUrl
+  // above, this is also rendered directly as an <a href>.
+  url: z.httpUrl(),
   relevance: z.string(),
 });
 

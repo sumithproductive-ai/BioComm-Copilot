@@ -6,10 +6,16 @@ import { db } from "@/lib/db";
 import { batchProfileSchema } from "@/lib/validations/therapy-profile";
 import { executeAssessmentRun, type ExecutableMemoRun } from "@/lib/agents/run-executor";
 import { assessmentRunQueue } from "@/lib/agents/run-queue";
+import { checkRateLimit, getClientKey, RateLimitError } from "@/lib/rate-limit";
 
 export type CreateBatchState = {
   error?: string;
 };
+
+// Stricter than RUN_ASSESSMENT_LIMIT (run-assessment.ts) since one batch
+// submission can queue up to MAX_BATCH_SIZE full pipelines at once — same
+// per-run Anthropic API cost concern, just multiplied per request.
+const CREATE_BATCH_LIMIT = { maxRequests: 2, windowMs: 10 * 60 * 1000 };
 
 // Batch queue entry point (roadmap: "scheduling / overnight runs" — the
 // batch-queue interpretation of that, confirmed over a delayed-start
@@ -25,6 +31,13 @@ export async function createBatchAssessments(
   _prevState: CreateBatchState,
   formData: FormData
 ): Promise<CreateBatchState> {
+  try {
+    checkRateLimit(await getClientKey(), CREATE_BATCH_LIMIT);
+  } catch (err) {
+    if (err instanceof RateLimitError) return { error: err.message };
+    throw err;
+  }
+
   const targets = formData.getAll("target[]").map(String);
   const modalities = formData.getAll("modality[]").map(String);
   const stages = formData.getAll("stage[]").map(String);
