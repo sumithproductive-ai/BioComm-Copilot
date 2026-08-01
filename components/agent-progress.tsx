@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import { ArrowRight, CheckCircle2, CircleAlert, Loader2, XCircle } from "lucide-react";
+import { ArrowRight, CheckCircle2, CircleAlert, FileText, Loader2, Upload, XCircle } from "lucide-react";
 import { runAssessment, type RunAssessmentState } from "@/lib/actions/run-assessment";
 import { getAgentProgressForPolling } from "@/lib/actions/agent-progress";
 import { AGENT_ROSTER, type AgentLiveStatus } from "@/lib/agents/roster";
@@ -12,6 +12,85 @@ import { cn } from "@/lib/utils";
 const initialState: RunAssessmentState = {};
 
 const POLL_INTERVAL_MS = 2500;
+
+// Mirrors lib/actions/run-assessment.ts's server-side limits — client-side
+// enforcement here is just a faster feedback loop, the server re-validates
+// regardless (never trust a client-side check alone).
+const MAX_DOCUMENT_COUNT = 5;
+const MAX_DOCUMENT_BYTES = 15 * 1024 * 1024;
+
+function formatBytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Uploaded PDFs are never saved (see lib/pdf-extract.ts) — read once,
+// extracted to text as additional context for every research agent, then
+// discarded. A single native multi-file input, not a custom picker — file
+// inputs can't have their selection set programmatically (a browser
+// security restriction), so per-file remove buttons would need a
+// DataTransfer workaround; a plain native input is simpler and just as
+// usable (re-opening the picker replaces the selection).
+function DocumentUpload() {
+  const [files, setFiles] = useState<File[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  function handleChange(fileList: FileList | null) {
+    const selected = Array.from(fileList ?? []);
+    const oversized = selected.filter((f) => f.size > MAX_DOCUMENT_BYTES);
+    const tooMany = selected.length > MAX_DOCUMENT_COUNT;
+    setError(
+      oversized.length > 0
+        ? `${oversized.map((f) => f.name).join(", ")} exceeds the 15 MB per-file limit — remove it and reselect.`
+        : tooMany
+          ? `Only the first ${MAX_DOCUMENT_COUNT} files will be used.`
+          : null
+    );
+    setFiles(selected.slice(0, MAX_DOCUMENT_COUNT));
+  }
+
+  return (
+    <div className="rounded-[9px] border border-border bg-white px-3 py-2.5">
+      <label className="flex cursor-pointer items-start justify-between gap-2">
+        <div>
+          <span className="text-sm font-medium text-foreground">Supplementary documents</span>
+          <span className="block text-xs text-muted-foreground">
+            Optional — add up to {MAX_DOCUMENT_COUNT} PDFs (data room materials, internal decks) for
+            additional context. Read once for this run, never saved.
+          </span>
+        </div>
+        <span className="flex shrink-0 items-center gap-1.5 rounded-[9px] border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-brand-navy hover:bg-slate-50">
+          <Upload className="size-3.5" />
+          Choose PDFs
+        </span>
+        <input
+          type="file"
+          name="documents"
+          accept="application/pdf"
+          multiple
+          className="hidden"
+          onChange={(e) => handleChange(e.target.files)}
+        />
+      </label>
+
+      {files.length > 0 && (
+        <ul className="mt-2 flex flex-col gap-1">
+          {files.map((file, i) => (
+            <li
+              key={`${file.name}-${i}`}
+              className="flex items-center gap-1.5 rounded-md bg-slate-50 px-2 py-1 text-xs text-foreground"
+            >
+              <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{file.name}</span>
+              <span className="shrink-0 text-muted-foreground">({formatBytes(file.size)})</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
 
 type AgentRow = { agentName: string; status: AgentLiveStatus; attempt: number; note: string | null };
 
@@ -137,6 +216,7 @@ export function AgentProgressSection({
   if (!started) {
     return (
       <form action={formAction} className="flex flex-col gap-3">
+        <DocumentUpload />
         <label className="flex items-start gap-2.5 rounded-[9px] border border-border bg-white px-3 py-2.5 text-sm has-[:checked]:border-brand-navy/30 has-[:checked]:bg-blue-50/50">
           <input
             type="checkbox"

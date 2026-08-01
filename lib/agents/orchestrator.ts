@@ -44,6 +44,10 @@ export type OrchestratorInput = {
   // Synthesis runs. Off by default — costs roughly 1.5-2x runtime/API spend
   // when flags exist, nothing extra when Critic finds nothing to flag.
   deepResearch?: boolean;
+  // Text extracted from user-uploaded PDFs before this run started (never
+  // persisted as files — see lib/pdf-extract.ts and run-assessment.ts).
+  // Passed to every research agent, same as reviewerFeedback.
+  supplementaryDocuments?: string;
 };
 
 // Critic's system prompt (critic.ts) uses these exact "section" strings —
@@ -169,34 +173,40 @@ export async function runOrchestrator(
     stage: input.stage,
     indication: input.indication,
     context: input.context,
+    supplementaryDocuments: input.supplementaryDocuments,
   };
   const competitiveInput: CompetitiveIntelligenceInput = {
     target: input.target,
     modality: input.modality,
     indication: input.indication,
+    supplementaryDocuments: input.supplementaryDocuments,
   };
   const commercialInput: CommercialOpportunityInput = {
     target: input.target,
     modality: input.modality,
     indication: input.indication,
+    supplementaryDocuments: input.supplementaryDocuments,
   };
   const regulatoryInput: RegulatoryInput = {
     target: input.target,
     modality: input.modality,
     stage: input.stage,
     indication: input.indication,
+    supplementaryDocuments: input.supplementaryDocuments,
   };
   const dealComparablesInput: DealComparablesInput = {
     target: input.target,
     modality: input.modality,
     stage: input.stage,
     indication: input.indication,
+    supplementaryDocuments: input.supplementaryDocuments,
   };
   const patentsInput: PatentsInput = {
     target: input.target,
     modality: input.modality,
     indication: input.indication,
     context: input.context,
+    supplementaryDocuments: input.supplementaryDocuments,
   };
 
   // Dispatch every research agent concurrently — Promise.allSettled so one

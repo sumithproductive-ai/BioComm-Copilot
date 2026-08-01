@@ -11,6 +11,7 @@ import { dealComparablesOutputSchema, type DealComparablesOutput } from "./schem
 import { secEdgarSearchToolDefinition, searchSecFilings } from "./tools/sec-edgar";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
+import { formatSupplementaryDocuments } from "./supplementary-documents";
 
 const client = new Anthropic();
 
@@ -70,6 +71,9 @@ export type DealComparablesInput = {
   // Deep Research Mode only (orchestrator.ts) — Critic's flags against this
   // agent's prior pass, fed back for a targeted second pass.
   reviewerFeedback?: string[];
+  // User-uploaded PDF text, extracted before this run started (never
+  // persisted — see lib/pdf-extract.ts and run-assessment.ts).
+  supplementaryDocuments?: string;
 };
 
 function isToolUseBlock(block: Anthropic.ContentBlock): block is Anthropic.ToolUseBlock {
@@ -110,7 +114,7 @@ Modality: ${input.modality}
 Stage: ${input.stage}
 Indication: ${input.indication}
 
-Today's date is ${today}. Use search_sec_filings and web_search to gather real data before calling submit_findings. Remember: if you find no verifiable, disclosed deal, set noCompFound: true with a real explanation rather than fabricating one.${formatReviewerFeedback(input.reviewerFeedback)}`,
+Today's date is ${today}. Use search_sec_filings and web_search to gather real data before calling submit_findings. Remember: if you find no verifiable, disclosed deal, set noCompFound: true with a real explanation rather than fabricating one.${formatReviewerFeedback(input.reviewerFeedback)}${formatSupplementaryDocuments(input.supplementaryDocuments)}`,
     },
   ];
 

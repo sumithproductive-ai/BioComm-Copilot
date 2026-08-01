@@ -11,6 +11,7 @@ import { patentOutputSchema, type PatentOutput } from "./schemas";
 import { epoPatentSearchToolDefinition, searchPatents } from "./tools/epo-patents";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
+import { formatSupplementaryDocuments } from "./supplementary-documents";
 
 const client = new Anthropic();
 
@@ -63,6 +64,9 @@ export type PatentsInput = {
   // Deep Research Mode only (orchestrator.ts) — Critic's flags against this
   // agent's prior pass, fed back for a targeted second pass.
   reviewerFeedback?: string[];
+  // User-uploaded PDF text, extracted before this run started (never
+  // persisted — see lib/pdf-extract.ts and run-assessment.ts).
+  supplementaryDocuments?: string;
 };
 
 function isToolUseBlock(block: Anthropic.ContentBlock): block is Anthropic.ToolUseBlock {
@@ -100,7 +104,7 @@ Modality: ${input.modality}
 Indication: ${input.indication}
 ${input.context ? `Additional context: ${input.context}` : ""}
 
-Today's date is ${today}. Use search_patents to gather real data before calling submit_findings.${formatReviewerFeedback(input.reviewerFeedback)}`,
+Today's date is ${today}. Use search_patents to gather real data before calling submit_findings.${formatReviewerFeedback(input.reviewerFeedback)}${formatSupplementaryDocuments(input.supplementaryDocuments)}`,
     },
   ];
 

@@ -128,6 +128,18 @@ model MemoRun {
   // the memo page can show whether a given run used it.
   deepResearch Boolean @default(false)
 
+  // Count only — a transparency note on the memo, not a record of what was
+  // uploaded. The uploaded PDFs themselves are never persisted (extracted
+  // to text in-memory, used for this run only, then discarded — see
+  // lib/pdf-extract.ts and run-assessment.ts); this is just "N documents
+  // were used" for anyone reading the memo later.
+  supplementaryDocumentCount Int     @default(0)
+  // Human-readable note on anything skipped or truncated (too many files,
+  // oversized, unparseable, or over the combined size budget) — a silent
+  // drop is the wrong failure mode for an app about knowing what data went
+  // into an assessment, so this surfaces on the memo page, not just logs.
+  supplementaryDocumentNote  String?
+
   createdAt         DateTime @default(now()) @db.Timestamptz(6)
   langfuseSessionId String?
 
