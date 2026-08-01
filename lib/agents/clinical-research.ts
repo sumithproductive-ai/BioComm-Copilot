@@ -8,6 +8,7 @@ import type { LangfuseSpanClient } from "langfuse";
 import { clinicalResearchOutputSchema, type ClinicalResearchOutput } from "./schemas";
 import { clinicalTrialsToolDefinition, searchClinicalTrials } from "./tools/clinicaltrials";
 import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
+import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 
 const client = new Anthropic();
 
@@ -105,6 +106,15 @@ export async function runClinicalResearchAgent(
   // it before being accepted.
   const realNctIds = new Set<string>();
 
+  // Same provenance idea, generalized to every other citation field this
+  // agent has (mechanismOfAction, safetySignals, similarDrugFailures) — the
+  // NCT check above is stricter (exact ID match) and stays as the check for
+  // trials specifically; this is hostname-level for everything else,
+  // seeded with clinicaltrials.gov/pubmed.ncbi.nlm.nih.gov whenever those
+  // structured tools actually return results, plus every real web_search
+  // result hostname.
+  const knownHostnames = new Set<string>();
+
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
@@ -155,6 +165,7 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
     });
 
     messages.push({ role: "assistant", content: response.content });
+    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
 
     const submitBlock = response.content
       .filter(isToolUseBlock)
@@ -167,14 +178,32 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
         const unverifiedNctIds = parsed.data.trials
           .map((t) => t.nctId)
           .filter((nctId) => !realNctIds.has(nctId));
-        if (unverifiedNctIds.length === 0) return parsed.data;
+        const citationUrls = [
+          ...parsed.data.mechanismOfAction.citations.map((c) => c.sourceUrl),
+          ...parsed.data.safetySignals.map((s) => s.citation.sourceUrl),
+          ...parsed.data.similarDrugFailures.map((f) => f.citation.sourceUrl),
+        ];
+        const unverifiedUrls = findUnverifiedUrls(citationUrls, knownHostnames);
+        if (unverifiedNctIds.length === 0 && unverifiedUrls.length === 0) return parsed.data;
+
+        const problems: string[] = [];
+        if (unverifiedNctIds.length > 0) {
+          problems.push(
+            `these NCT IDs are not in the search_clinical_trials results from this conversation: ${unverifiedNctIds.join(", ")} — never invent or recall an NCT ID from memory, search to confirm them or remove them from trials`
+          );
+        }
+        if (unverifiedUrls.length > 0) {
+          problems.push(
+            `these citation URLs (in mechanismOfAction, safetySignals, or similarDrugFailures) were not seen in any real search_pubmed or web_search result this conversation: ${unverifiedUrls.join(", ")} — search to confirm them or remove the unverifiable entries`
+          );
+        }
         messages.push({
           role: "user",
           content: [
             {
               type: "tool_result",
               tool_use_id: submitBlock.id,
-              content: `submit_findings input failed validation: these NCT IDs are not in the search_clinical_trials results from this conversation: ${unverifiedNctIds.join(", ")}. Per the hard rule in your system prompt, every trial must come from a real search_clinical_trials result — never invent or recall an NCT ID from memory. Either search for these trials to confirm them, or remove them from the trials array and call submit_findings again.`,
+              content: `submit_findings input failed validation: ${problems.join("; ")}. Then call submit_findings again.`,
               is_error: true,
             },
           ],
@@ -222,6 +251,7 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
         for (const study of result) {
           if (study.nctId) realNctIds.add(study.nctId);
         }
+        if (result.length > 0) knownHostnames.add("clinicaltrials.gov");
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",
@@ -232,6 +262,7 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
         const result = await searchPubmed(
           block.input as { query: string; maxResults?: number }
         );
+        if (result.length > 0) knownHostnames.add("pubmed.ncbi.nlm.nih.gov");
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",

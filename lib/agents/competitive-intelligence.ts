@@ -13,6 +13,7 @@ import {
   UC_COMPETITOR_REFERENCE_LIST,
   findMissingReferenceCompetitors as findMissingReferenceCompetitorsByName,
 } from "@/lib/config/uc-competitors";
+import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 
 const client = new Anthropic();
 
@@ -112,6 +113,13 @@ export async function runCompetitiveIntelligenceAgent(
 ): Promise<CompetitiveIntelligenceOutput> {
   const today = new Date().toISOString().slice(0, 10);
 
+  // Provenance tracking for approvedCompetitors/lateStagePipeline citations
+  // — same idea as Clinical Research's realNctIds, hostname-level since
+  // these are arbitrary URLs, not compact exact IDs. Seeded with
+  // clinicaltrials.gov whenever that structured tool actually returns
+  // results, plus every real web_search result hostname.
+  const knownHostnames = new Set<string>();
+
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
@@ -161,6 +169,7 @@ Today's date is ${today}. Use search_clinical_trials and web_search to gather re
     });
 
     messages.push({ role: "assistant", content: response.content });
+    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
 
     const submitBlock = response.content
       .filter(isToolUseBlock)
@@ -171,14 +180,31 @@ Today's date is ${today}. Use search_clinical_trials and web_search to gather re
       );
       if (parsed.success) {
         const missing = findMissingReferenceCompetitors(parsed.data);
-        if (missing.length === 0) return parsed.data;
+        const citationUrls = [
+          ...parsed.data.approvedCompetitors.map((c) => c.citation.sourceUrl),
+          ...parsed.data.lateStagePipeline.map((a) => a.citation.sourceUrl),
+        ];
+        const unverifiedUrls = findUnverifiedUrls(citationUrls, knownHostnames);
+        if (missing.length === 0 && unverifiedUrls.length === 0) return parsed.data;
+
+        const problems: string[] = [];
+        if (missing.length > 0) {
+          problems.push(
+            `approvedCompetitors is missing required reference-list drugs: ${missing.join(", ")} — every drug on that list must appear with a real citation, unless you have direct cited evidence it's been withdrawn (state that explicitly instead of omitting it)`
+          );
+        }
+        if (unverifiedUrls.length > 0) {
+          problems.push(
+            `these citation URLs were not seen in any real search_clinical_trials or web_search result this conversation: ${unverifiedUrls.join(", ")} — never invent a source URL, search to confirm them or remove the unverifiable entries`
+          );
+        }
         messages.push({
           role: "user",
           content: [
             {
               type: "tool_result",
               tool_use_id: submitBlock.id,
-              content: `submit_findings input failed validation: approvedCompetitors is missing required reference-list drugs: ${missing.join(", ")}. Per the hard rule in your system prompt, every drug on that list must appear in approvedCompetitors with a real citation, unless you have direct cited evidence it's been withdrawn from the market — in which case say so explicitly instead of omitting it. Search for the missing ones and call submit_findings again with the complete list.`,
+              content: `submit_findings input failed validation: ${problems.join("; ")}. Then call submit_findings again.`,
               is_error: true,
             },
           ],
@@ -222,6 +248,7 @@ Today's date is ${today}. Use search_clinical_trials and web_search to gather re
         const result = await searchClinicalTrials(
           block.input as { query: string; condition?: string; pageSize?: number }
         );
+        if (result.length > 0) knownHostnames.add("clinicaltrials.gov");
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",

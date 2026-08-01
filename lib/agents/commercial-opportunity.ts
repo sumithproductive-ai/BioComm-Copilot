@@ -10,6 +10,7 @@ import {
   type CompetitiveIntelligenceOutput,
 } from "./schemas";
 import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
+import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 
 const client = new Anthropic();
 
@@ -83,6 +84,14 @@ async function runFindingsLoop(
   parentSpan: LangfuseSpanClient | undefined,
   spanPrefix: string
 ): Promise<CommercialOpportunityOutput> {
+  // Provenance tracking for patientPopulationEstimate/unmetNeed citations —
+  // same idea as Clinical Research's realNctIds, hostname-level since these
+  // are arbitrary URLs. Seeded with pubmed.ncbi.nlm.nih.gov whenever
+  // search_pubmed actually returns results, plus every real web_search
+  // result hostname. The reconciliation step afterward doesn't need this —
+  // it can't introduce new citations (marketCrowdingAssessment has none).
+  const knownHostnames = new Set<string>();
+
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const isLastChance = i === MAX_ITERATIONS - 1;
 
@@ -118,6 +127,7 @@ async function runFindingsLoop(
     });
 
     messages.push({ role: "assistant", content: response.content });
+    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
 
     const submitBlock = response.content
       .filter(isToolUseBlock)
@@ -126,7 +136,28 @@ async function runFindingsLoop(
       const parsed = commercialOpportunityOutputSchema.safeParse(
         backfillEmptyArrayFields(submitBlock.input)
       );
-      if (parsed.success) return parsed.data;
+      if (parsed.success) {
+        const citationUrls = [
+          ...(parsed.data.patientPopulationEstimate.citation
+            ? [parsed.data.patientPopulationEstimate.citation.sourceUrl]
+            : []),
+          ...parsed.data.unmetNeed.citations.map((c) => c.sourceUrl),
+        ];
+        const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
+        if (unverified.length === 0) return parsed.data;
+        messages.push({
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: submitBlock.id,
+              content: `submit_findings input failed validation: these citation URLs (in patientPopulationEstimate or unmetNeed) were not seen in any real search_pubmed or web_search result this conversation: ${unverified.join(", ")}. Never invent a source URL — search to confirm them or remove the unverifiable citations and call submit_findings again.`,
+              is_error: true,
+            },
+          ],
+        });
+        continue;
+      }
       // Malformed structured output is a confirmed failure mode at scale on
       // other agents in this codebase — safeParse and feed the error back
       // so the model can self-correct within this conversation instead of
@@ -160,6 +191,7 @@ async function runFindingsLoop(
       if (block.name === "search_pubmed") {
         const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
         const result = await searchPubmed(block.input as { query: string; maxResults?: number });
+        if (result.length > 0) knownHostnames.add("pubmed.ncbi.nlm.nih.gov");
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",

@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { LangfuseSpanClient } from "langfuse";
 import { regulatoryOutputSchema, type RegulatoryOutput } from "./schemas";
 import { UC_COMPETITOR_REFERENCE_LIST } from "@/lib/config/uc-competitors";
+import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 
 const client = new Anthropic();
 
@@ -91,6 +92,10 @@ export async function runRegulatoryAgent(
 ): Promise<RegulatoryOutput> {
   const today = new Date().toISOString().slice(0, 10);
 
+  // Same reasoning as Deal Comparables — no structured tool fallback here,
+  // every citation is only as trustworthy as web_search itself.
+  const knownHostnames = new Set<string>();
+
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
@@ -136,13 +141,34 @@ Today's date is ${today}. Use web_search to gather real data before calling subm
     });
 
     messages.push({ role: "assistant", content: response.content });
+    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
 
     const submitBlock = response.content
       .filter(isToolUseBlock)
       .find((b) => b.name === "submit_findings");
     if (submitBlock) {
       const parsed = regulatoryOutputSchema.safeParse(backfillEmptyArrayFields(submitBlock.input));
-      if (parsed.success) return parsed.data;
+      if (parsed.success) {
+        const citationUrls = [
+          ...parsed.data.guidanceDocuments.map((doc) => doc.url),
+          ...parsed.data.endpointPrecedent.flatMap((p) => p.citations.map((c) => c.sourceUrl)),
+          ...parsed.data.priorApprovalsSameMechanism.map((a) => a.citation.sourceUrl),
+        ];
+        const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
+        if (unverified.length === 0) return parsed.data;
+        messages.push({
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: submitBlock.id,
+              content: `submit_findings input failed validation: these URLs were not seen in any real web_search result this conversation: ${unverified.join(", ")}. Per the hard rule in your system prompt, every guidanceDocuments/endpointPrecedent/priorApprovalsSameMechanism entry needs a real citation or a real, verifiable URL from web_search — never invent one. Either search to confirm these, or remove the unverifiable entries and call submit_findings again.`,
+              is_error: true,
+            },
+          ],
+        });
+        continue;
+      }
       // Malformed structured output is a confirmed failure mode at scale on
       // other agents in this codebase — safeParse and feed the error back
       // so the model can self-correct within this conversation instead of

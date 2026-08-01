@@ -8,6 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { LangfuseSpanClient } from "langfuse";
 import { dealComparablesOutputSchema, type DealComparablesOutput } from "./schemas";
+import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 
 const client = new Anthropic();
 
@@ -88,6 +89,13 @@ export async function runDealComparablesAgent(
 ): Promise<DealComparablesOutput> {
   const today = new Date().toISOString().slice(0, 10);
 
+  // This agent has no structured tool fallback (unlike Clinical Research or
+  // Competitive Intelligence, which can also call the real ClinicalTrials.gov
+  // API) — every citation here is only as trustworthy as web_search itself.
+  // Track every hostname that actually appeared in a real result this run;
+  // a citation whose hostname never appeared is rejected below.
+  const knownHostnames = new Set<string>();
+
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
@@ -133,13 +141,30 @@ Today's date is ${today}. Use web_search to gather real data before calling subm
     });
 
     messages.push({ role: "assistant", content: response.content });
+    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
 
     const submitBlock = response.content
       .filter(isToolUseBlock)
       .find((b) => b.name === "submit_findings");
     if (submitBlock) {
       const parsed = dealComparablesOutputSchema.safeParse(backfillEmptyArrayFields(submitBlock.input));
-      if (parsed.success) return parsed.data;
+      if (parsed.success) {
+        const citationUrls = parsed.data.comparableDeals.map((deal) => deal.citation.sourceUrl);
+        const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
+        if (unverified.length === 0) return parsed.data;
+        messages.push({
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: submitBlock.id,
+              content: `submit_findings input failed validation: these citation URLs were not seen in any real web_search result this conversation: ${unverified.join(", ")}. Per the hard rule in your system prompt, every comparableDeals citation needs a real source from an actual web_search result — never invent a source URL. Either search to confirm these, or remove the unverifiable deals and call submit_findings again (setting noCompFound: true if nothing verifiable remains).`,
+              is_error: true,
+            },
+          ],
+        });
+        continue;
+      }
       // Malformed structured output is a confirmed failure mode at scale on
       // other agents in this codebase — safeParse and feed the error back
       // so the model can self-correct within this conversation instead of
