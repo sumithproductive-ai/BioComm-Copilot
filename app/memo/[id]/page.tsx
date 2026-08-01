@@ -32,6 +32,7 @@ import { SourceIndexSection } from "@/components/source-index";
 import { EpistemicLedgerSection } from "@/components/epistemic-ledger";
 import { MemoToc, type MemoTocSection } from "@/components/memo-toc";
 import { CollapsibleSectionCard } from "@/components/collapsible-section-card";
+import { DeleteAssessmentButton } from "@/components/delete-assessment-button";
 import { isValidUuid } from "@/lib/memo/is-valid-uuid";
 
 const CARD_CLASS =
@@ -218,6 +219,7 @@ export default async function MemoRunPage({
               >
                 + New Assessment
               </Link>
+              <DeleteAssessmentButton id={memoRun.id} target={memoRun.target} />
             </div>
           </div>
 
@@ -322,7 +324,11 @@ export default async function MemoRunPage({
           )}
 
           {hasSourceIndex && (
-            <CollapsibleSectionCard id="source-index" title={`Source Index (${sourceIndex.length})`}>
+            <CollapsibleSectionCard
+              id="source-index"
+              title={`Source Index (${sourceIndex.length})`}
+              defaultOpen={false}
+            >
               <SourceIndexSection citations={sourceIndex} />
             </CollapsibleSectionCard>
           )}
