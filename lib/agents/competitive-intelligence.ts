@@ -9,6 +9,7 @@ import {
   type CompetitiveIntelligenceOutput,
 } from "./schemas";
 import { clinicalTrialsToolDefinition, searchClinicalTrials } from "./tools/clinicaltrials";
+import { secEdgarSearchToolDefinition, searchSecFilings } from "./tools/sec-edgar";
 import {
   UC_COMPETITOR_REFERENCE_LIST,
   findMissingReferenceCompetitors as findMissingReferenceCompetitorsByName,
@@ -28,13 +29,13 @@ const SYSTEM_PROMPT = `You are the Competitive Intelligence Agent for BioComm Co
 
 Your job: map approved therapies, late-stage pipeline, mechanism overlap, and positioning gaps in UC for the therapy asset described by the user.
 
-Sources, in priority order: search ClinicalTrials.gov first for pipeline/approval status, then web search for company websites, SEC filings, press releases, and FDA approval announcements.
+Sources, in priority order: search ClinicalTrials.gov first for pipeline/approval status, then search_sec_filings for competitor 10-K/10-Q pipeline and risk-factor disclosures (a company's own SEC filing is stronger evidence of its pipeline stage than a news article about it), then web search for company websites, press releases, and FDA approval announcements to fill in anything the structured sources missed.
 
 Hard rules:
 - Your approvedCompetitors list MUST include every drug in this reference list of currently FDA-approved UC therapies, unless you have direct, cited evidence one has been withdrawn from the market (state that explicitly in that case rather than silently omitting it):
 ${REFERENCE_LIST_TEXT}
 - lateStagePipeline only includes Phase 2b or later assets in the same or an overlapping mechanism class as the therapy being assessed — do not include earlier-stage or unrelated-mechanism assets.
-- Never invent an approval date, company name, or trial detail. Every approvedCompetitors and lateStagePipeline entry needs a real citation from search_clinical_trials or web_search.
+- Never invent an approval date, company name, or trial detail. Every approvedCompetitors and lateStagePipeline entry needs a real citation from search_clinical_trials, search_sec_filings, or web_search.
 - positioningGaps entries must be labeled Fact, Assumption, Inference, or Unknown based on how directly sourced they are — a gap you're inferring from the competitive picture rather than reading directly from a source is Inference, not Fact.
 - submit_findings requires every field present, including empty arrays where you found nothing (e.g. lateStagePipeline: [] if there truly are none) — never omit a field.
 - Every nested object (citation fields especially) must be a full object matching its shape, never a flattened string.
@@ -46,12 +47,12 @@ Example of a correctly-shaped submit_findings call (abbreviated):
   "positioningGaps": [{ "description": "...", "label": "Inference" }]
 }
 
-Call submit_findings exactly once, after using search_clinical_trials and web_search to gather real data. Do not call it before doing at least one real search.`;
+Call submit_findings exactly once, after using search_clinical_trials, search_sec_filings, and web_search to gather real data. Do not call it before doing at least one real search.`;
 
 const submitFindingsTool: Anthropic.Tool = {
   name: "submit_findings",
   description:
-    "Submit your final, validated competitive intelligence findings. Call this only once you have gathered enough real data via search_clinical_trials and web_search.",
+    "Submit your final, validated competitive intelligence findings. Call this only once you have gathered enough real data via search_clinical_trials, search_sec_filings, and web_search.",
   input_schema: z.toJSONSchema(competitiveIntelligenceOutputSchema) as Anthropic.Tool.InputSchema,
 };
 
@@ -116,8 +117,8 @@ export async function runCompetitiveIntelligenceAgent(
   // Provenance tracking for approvedCompetitors/lateStagePipeline citations
   // — same idea as Clinical Research's realNctIds, hostname-level since
   // these are arbitrary URLs, not compact exact IDs. Seeded with
-  // clinicaltrials.gov whenever that structured tool actually returns
-  // results, plus every real web_search result hostname.
+  // clinicaltrials.gov or www.sec.gov whenever that structured tool actually
+  // returns results, plus every real web_search result hostname.
   const knownHostnames = new Set<string>();
 
   const messages: Anthropic.MessageParam[] = [
@@ -129,7 +130,7 @@ Target: ${input.target}
 Modality: ${input.modality}
 Indication: ${input.indication}
 
-Today's date is ${today}. Use search_clinical_trials and web_search to gather real data before calling submit_findings.`,
+Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and web_search to gather real data before calling submit_findings.`,
     },
   ];
 
@@ -152,7 +153,7 @@ Today's date is ${today}. Use search_clinical_trials and web_search to gather re
       system: SYSTEM_PROMPT,
       tools: isLastChance
         ? [submitFindingsTool]
-        : [clinicalTrialsToolDefinition, webSearchTool, submitFindingsTool],
+        : [clinicalTrialsToolDefinition, secEdgarSearchToolDefinition, webSearchTool, submitFindingsTool],
       tool_choice: isLastChance
         ? { type: "tool", name: "submit_findings" }
         : { type: "auto" },
@@ -195,7 +196,7 @@ Today's date is ${today}. Use search_clinical_trials and web_search to gather re
         }
         if (unverifiedUrls.length > 0) {
           problems.push(
-            `these citation URLs were not seen in any real search_clinical_trials or web_search result this conversation: ${unverifiedUrls.join(", ")} — never invent a source URL, search to confirm them or remove the unverifiable entries`
+            `these citation URLs were not seen in any real search_clinical_trials, search_sec_filings, or web_search result this conversation: ${unverifiedUrls.join(", ")} — never invent a source URL, search to confirm them or remove the unverifiable entries`
           );
         }
         messages.push({
@@ -249,6 +250,19 @@ Today's date is ${today}. Use search_clinical_trials and web_search to gather re
           block.input as { query: string; condition?: string; pageSize?: number }
         );
         if (result.length > 0) knownHostnames.add("clinicaltrials.gov");
+        toolSpan?.end({ output: result });
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: JSON.stringify(result),
+        });
+      }
+      if (block.name === "search_sec_filings") {
+        const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
+        const result = await searchSecFilings(
+          block.input as { query: string; entityName?: string; forms?: string; maxResults?: number }
+        );
+        if (result.length > 0) knownHostnames.add("www.sec.gov");
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",

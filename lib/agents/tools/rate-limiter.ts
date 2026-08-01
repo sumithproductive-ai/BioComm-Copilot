@@ -60,3 +60,9 @@ export const pubmedLimiter = createRateLimiter({ maxConcurrent: 3, minIntervalMs
 // cap so concurrent agents (Clinical + Competitive both query it) don't
 // hammer it simultaneously.
 export const clinicalTrialsLimiter = createRateLimiter({ maxConcurrent: 3, minIntervalMs: 350 });
+
+// SEC's Fair Access policy publishes a 10 req/sec ceiling across all of
+// sec.gov/data.sec.gov/efts.sec.gov combined — well under that, same
+// conservative-pacing reasoning as the other two, and this one's shared
+// by two agents (Deal Comparables + Competitive Intelligence) at once.
+export const secEdgarLimiter = createRateLimiter({ maxConcurrent: 3, minIntervalMs: 300 });
