@@ -4,6 +4,12 @@
 
 ---
 
+## Post-Demo Status Update (2026-08-01)
+
+Demo Day happened and the system below shipped as spec'd. Everything below this note is the original pre-build brief, kept as written for historical record — see PRD.md's own Post-Demo Status Update for the full delta. Short version: the agent roster grew from 7 to 8 (Patent Landscape Agent added, informational-only), citations are now checked against real tool/search results before acceptance, SEC EDGAR became a real structured tool (not just an aspirational MCP integration), a Deep Research Mode and a batch queue shipped, and two items this brief lists as "out of scope for PoC" (PDF export, user accounts) are no longer out of scope — PDF export shipped, and user accounts (Google OAuth) is the next confirmed goal after security hardening.
+
+---
+
 ## Problem Statement
 
 Biotech BD and licensing professionals spend 1–3 working days manually producing a first-pass commercialization assessment when evaluating a therapy asset. This work spans five research domains — clinical landscape, competitive intelligence, commercial opportunity, deal comparables, and regulatory pathway — each requiring manual searches across PubMed, ClinicalTrials.gov, SEC filings, FDA labels, company websites, and press releases. The output is compiled into a structured memo shared up the chain to heads of BD, CEOs, and advisors.
@@ -76,10 +82,14 @@ Identifies comparable licensing and acquisition deals by asset type, stage, deal
 Maps the regulatory pathway, endpoint precedent from approved UC therapies, FDA guidance, and likely development timeline.
 *Sources: FDA guidance documents, approval letters, prior UC labels.*
 
-### Agent 6 — Critic Agent
-Reviews all agent outputs before synthesis. Flags: unsupported clinical claims, missing obvious competitors, assumptions presented as facts, deals without disclosed terms, outdated trial status, overconfident regulatory assertions. Output appears in the memo as a "Reviewer Notes" section — making explicit what the system does not know.
+### Agent 6 — Patent Landscape Agent *(added post-Demo Day)*
+Finds patents relevant to the therapy asset — composition-of-matter, method-of-use, and formulation patents on the asset itself, plus blocking/competing patents held by others. Informational only: does not feed the Confidence Score.
+*Sources: EPO Open Patent Services (structured), web search as fallback.*
 
-### Agent 7 — Synthesis Agent
+### Agent 7 — Critic Agent
+Reviews all agent outputs before synthesis. Flags: unsupported clinical claims, missing obvious competitors, assumptions presented as facts, deals without disclosed terms, outdated trial status, overconfident regulatory assertions. Output appears in the memo as a "Reviewer Notes" section — making explicit what the system does not know. *(Post-Demo Day: in Deep Research Mode, a flagged agent gets one more targeted pass and Critic re-reviews before Synthesis runs.)*
+
+### Agent 8 — Synthesis Agent
 Compiles all reviewed outputs into the structured memo. Adds confidence labels, as-of dates, and human review disclaimer.
 
 ---
@@ -103,10 +113,11 @@ Compiles all reviewed outputs into the structured memo. Adds confidence labels, 
 4. Commercial Opportunity
 5. Deal Comparables
 6. Regulatory Pathway
-7. Key Risks
-8. Preliminary Route Recommendations *(labeled as assumptions)*
-9. Reviewer Notes *(from Critic Agent)*
-10. Source Index *(all citations with access dates)*
+7. Patent Landscape *(added post-Demo Day; informational only, not in the Confidence Score)*
+8. Key Risks
+9. Preliminary Route Recommendations *(labeled as assumptions)*
+10. Reviewer Notes *(from Critic Agent)*
+11. Source Index *(all citations with access dates)*
 
 ---
 
@@ -133,35 +144,37 @@ The system never:
 
 | Layer | Technology |
 |---|---|
-| Agents / LLM | Claude (claude-sonnet-4-6 / claude-opus-4-8) |
+| Agents / LLM | Claude (claude-sonnet-5 — model naming changed since this table was first written) |
 | Orchestration | Claude API multi-agent with tool use, run as Next.js Server Actions/Route Handlers |
-| MCP Integrations | Anthropic MCP connector for Web search, Web fetch, ClinicalTrials.gov, PubMed; a thin custom tool for SEC EDGAR |
+| MCP Integrations | Anthropic's hosted `web_search` tool; thin custom tool clients (not MCP servers) for ClinicalTrials.gov, PubMed, SEC EDGAR, and EPO patent search — same "real API, no separate service" shape originally planned for SEC EDGAR, just applied uniformly instead of only to that one integration |
 | Application | Next.js (TypeScript, App Router) — full-stack, no separate backend service |
 | Database | PostgreSQL via Prisma (schema: ERD.md) |
 | Observability | Langfuse — traces every agent call, tool use, retry, and output |
-| Deployment | Azure — Azure App Service + Azure Database for PostgreSQL |
-| Structured Output | Typed schemas per agent (Zod), validated before synthesis |
+| Deployment | Azure Container Apps (`rg-students-platform`, shared HumanAngle cohort environment) — not Azure App Service as originally planned in this row; changed during the actual build |
+| Structured Output | Typed schemas per agent (Zod), validated before synthesis, plus a citation source-provenance check (post-Demo Day) against real tool/search results from that run |
 
 ---
 
 ## PoC Scope
 
+*Updated post-Demo Day — see the status note at the top of this document.*
+
 **In scope:**
 - UC indication only
 - Public data sources only
-- Single-threaded memo generation
 - Decision Summary scorecard
-- Structured memo as rendered web page with exportable format
-- Critic Agent review pass
+- Structured memo as a rendered web page, plus PDF export *(shipped post-Demo Day — was originally listed as out of scope below)*
+- Critic Agent review pass, with an optional Deep Research Mode second pass for flagged sections *(post-Demo Day)*
+- Batch queue for submitting multiple assessments at once *(post-Demo Day)*
 - Langfuse observability for all agent traces
-- Deployed on Azure
+- Deployed on Azure (Container Apps)
 
 **Out of scope for PoC:**
-- User accounts, saved history, team collaboration
+- User accounts, saved history, team collaboration — *the near-term goal after security hardening now reverses this for user accounts specifically; see PRD.md's Post-Demo Status Update*
 - Proprietary databases (Evaluate, GlobalData, Citeline)
 - Real-time monitoring or alerts
 - Other indications
-- Automated PDF/PowerPoint export
+- Automated PowerPoint export *(PDF shipped; PowerPoint did not)*
 
 ---
 
