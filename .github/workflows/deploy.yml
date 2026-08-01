@@ -20,7 +20,10 @@
 # value genuinely is sensitive). Same story for MCP_BEARER_TOKEN (a random
 # shared secret gating the /api/[transport] MCP endpoint, which otherwise
 # lets anyone with the URL read every assessment ever run) — without it set,
-# that endpoint rejects every request rather than failing open.
+# that endpoint rejects every request rather than failing open. Same story
+# again for EPO_OPS_CLIENT_ID/EPO_OPS_CLIENT_SECRET (Patent Agent's OAuth2
+# client-credentials pair) — without them the Patent Agent fails every run,
+# not a partial failure either.
 name: deploy
 on:
   push:
@@ -54,7 +57,9 @@ jobs:
             --name ca-${{ vars.STUDENT }} \
             --secrets \
               anthropic-api-key="${{ secrets.ANTHROPIC_API_KEY }}" \
-              mcp-bearer-token="${{ secrets.MCP_BEARER_TOKEN }}"
+              mcp-bearer-token="${{ secrets.MCP_BEARER_TOKEN }}" \
+              epo-ops-client-id="${{ secrets.EPO_OPS_CLIENT_ID }}" \
+              epo-ops-client-secret="${{ secrets.EPO_OPS_CLIENT_SECRET }}"
 
       - name: Deploy to Container App
         run: |
@@ -64,4 +69,6 @@ jobs:
             --image ${{ vars.ACR_NAME }}.azurecr.io/${{ vars.STUDENT }}/web:${{ github.sha }} \
             --set-env-vars \
               ANTHROPIC_API_KEY=secretref:anthropic-api-key \
-              MCP_BEARER_TOKEN=secretref:mcp-bearer-token
+              MCP_BEARER_TOKEN=secretref:mcp-bearer-token \
+              EPO_OPS_CLIENT_ID=secretref:epo-ops-client-id \
+              EPO_OPS_CLIENT_SECRET=secretref:epo-ops-client-secret

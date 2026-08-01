@@ -1,8 +1,11 @@
 // Orchestrator — AGENT_PLAN.md §4.1. Top-level coordinator; never touches
-// sources directly. All 5 research agents, Critic, and Synthesis are now
-// built — this is the full 7-agent pipeline from AGENT_PLAN.md §4. Critic
-// runs after the 5 research agents settle; Synthesis runs last of all,
-// after Critic, since it compiles Critic's flags into Key Risks too.
+// sources directly. All 5 original research agents, the post-launch Patent
+// Agent, Critic, and Synthesis are now built — this is the full 8-agent
+// pipeline. Critic runs after the 6 research agents settle; Synthesis runs
+// last of all, after Critic, since it compiles Critic's flags into Key
+// Risks too. Patent findings are informational only (see synthesis.ts) —
+// they flow through Critic/Synthesis's full-ResearchOutputs input like
+// every other agent, just don't factor into the Confidence Score.
 
 import { randomUUID } from "node:crypto";
 import type { LangfuseSpanClient } from "langfuse";
@@ -17,6 +20,7 @@ import {
 } from "./commercial-opportunity";
 import { runRegulatoryAgent, type RegulatoryInput } from "./regulatory";
 import { runDealComparablesAgent, type DealComparablesInput } from "./deal-comparables";
+import { runPatentsAgent, type PatentsInput } from "./patents";
 import { runCriticAgent, type CriticInput } from "./critic";
 import { runSynthesisAgent, type SynthesisInput } from "./synthesis";
 import type {
@@ -53,6 +57,7 @@ const SECTION_TO_AGENT_KEY: Partial<Record<string, keyof ResearchOutputs>> = {
   "Commercial Opportunity": "commercial",
   Regulatory: "regulatory",
   "Deal Comparables": "dealComparables",
+  "Patent Landscape": "patents",
 };
 
 // Story 2 — reports live status transitions as they happen, separate from
@@ -187,6 +192,12 @@ export async function runOrchestrator(
     stage: input.stage,
     indication: input.indication,
   };
+  const patentsInput: PatentsInput = {
+    target: input.target,
+    modality: input.modality,
+    indication: input.indication,
+    context: input.context,
+  };
 
   // Dispatch every research agent concurrently — Promise.allSettled so one
   // slow/failed agent never blocks the others (AGENT_PLAN.md §3's explicit
@@ -209,8 +220,14 @@ export async function runOrchestrator(
   const competitiveOutputOnlyPromise: Promise<CompetitiveIntelligenceOutput | null> =
     competitivePromise.then((r) => r.output);
 
-  const [clinicalResult, competitiveResult, commercialResult, regulatoryResult, dealComparablesResult] =
-    await Promise.allSettled([
+  const [
+    clinicalResult,
+    competitiveResult,
+    commercialResult,
+    regulatoryResult,
+    dealComparablesResult,
+    patentsResult,
+  ] = await Promise.allSettled([
       runWithRetries(
         runTrace,
         "clinical",
@@ -236,6 +253,12 @@ export async function runOrchestrator(
         (span) => runDealComparablesAgent(dealComparablesInput, span),
         onAgentStatusChange
       ),
+      runWithRetries(
+        runTrace,
+        "patents",
+        (span) => runPatentsAgent(patentsInput, span),
+        onAgentStatusChange
+      ),
     ]);
 
   const agentStatuses = {
@@ -244,6 +267,7 @@ export async function runOrchestrator(
     commercial: "failed",
     dealComparables: "failed",
     regulatory: "failed",
+    patents: "failed",
   } as Record<keyof ResearchOutputs, AgentStatus>;
 
   const agentNotes: Partial<Record<keyof ResearchOutputs, string>> = {};
@@ -254,6 +278,7 @@ export async function runOrchestrator(
     commercial: null,
     dealComparables: null,
     regulatory: null,
+    patents: null,
   };
 
   if (clinicalResult.status === "fulfilled") {
@@ -294,6 +319,14 @@ export async function runOrchestrator(
     if (dealComparablesResult.value.note) agentNotes.dealComparables = dealComparablesResult.value.note;
   } else {
     agentNotes.dealComparables = `Unexpected rejection: ${String(dealComparablesResult.reason)}`;
+  }
+
+  if (patentsResult.status === "fulfilled") {
+    agentStatuses.patents = patentsResult.value.status;
+    researchOutputs.patents = patentsResult.value.output;
+    if (patentsResult.value.note) agentNotes.patents = patentsResult.value.note;
+  } else {
+    agentNotes.patents = `Unexpected rejection: ${String(patentsResult.reason)}`;
   }
 
   // Critic runs after all 5 research agents settle, not concurrently with
@@ -440,6 +473,24 @@ export async function runOrchestrator(
             agentStatuses.dealComparables = result.status;
             researchOutputs.dealComparables = result.output;
             agentNotes.dealComparables = "Deep research: revised after reviewer feedback";
+          }
+        })
+      );
+    }
+
+    const patentsFeedback = flagsByAgent.get("patents");
+    if (patentsFeedback) {
+      deepResearchTasks.push(
+        runWithRetries(
+          runTrace,
+          "patents",
+          (span) => runPatentsAgent({ ...patentsInput, reviewerFeedback: patentsFeedback }, span),
+          onAgentStatusChange
+        ).then((result) => {
+          if (result.status === "complete") {
+            agentStatuses.patents = result.status;
+            researchOutputs.patents = result.output;
+            agentNotes.patents = "Deep research: revised after reviewer feedback";
           }
         })
       );

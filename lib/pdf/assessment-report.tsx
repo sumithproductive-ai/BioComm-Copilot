@@ -5,6 +5,7 @@ import type {
   CommercialOpportunity,
   RegulatoryLandscape,
   DealComparablesLandscape,
+  PatentLandscape,
   ReviewerNotes,
   DecisionSummaryRecord,
   KeyRisksAndRecommendations,
@@ -126,6 +127,7 @@ export type AssessmentReportProps = {
   commercial: CommercialOpportunity | null;
   regulatory: RegulatoryLandscape | null;
   dealComparables: DealComparablesLandscape | null;
+  patents: PatentLandscape | null;
   keyRisksAndRecommendations: KeyRisksAndRecommendations | null;
   reviewerNotes: ReviewerNotes | null;
   sourceIndex: { id: string; sourceUrl: string; sourceType: string; accessedDate: Date }[];
@@ -141,6 +143,7 @@ export function AssessmentReportDocument({
   commercial,
   regulatory,
   dealComparables,
+  patents,
   keyRisksAndRecommendations,
   reviewerNotes,
   sourceIndex,
@@ -401,6 +404,51 @@ export function AssessmentReportDocument({
               ))}
             </>
           )}
+
+        {patents && (patents.patentLandscapeSummary || patents.patents.length > 0) && (
+          <>
+            <SectionTitle>Patent Landscape</SectionTitle>
+            {patents.patentLandscapeSummary && (
+              <View style={{ marginBottom: 8 }}>
+                <View style={styles.row}>
+                  <Text style={styles.subheading}>Landscape Summary</Text>
+                  {patents.patentLandscapeLabel && <ClaimTag label={patents.patentLandscapeLabel} />}
+                </View>
+                <Text style={styles.body}>{patents.patentLandscapeSummary}</Text>
+              </View>
+            )}
+            {patents.patents.map((patent) => (
+              <View key={patent.id} style={styles.card} wrap={false}>
+                <View style={styles.row}>
+                  <View>
+                    <Text style={[styles.body, { fontWeight: 700, color: COLORS.navy }]}>{patent.title}</Text>
+                    <Text style={styles.muted}>
+                      {patent.patentNumber} · {patent.applicant}
+                      {patent.publicationDate
+                        ? ` · published ${new Date(patent.publicationDate).getFullYear()}`
+                        : ""}
+                    </Text>
+                  </View>
+                  <Tag
+                    text={patent.status}
+                    color={
+                      patent.status === "Granted"
+                        ? COLORS.fact
+                        : patent.status === "Pending"
+                          ? COLORS.inference
+                          : COLORS.unknown
+                    }
+                  />
+                </View>
+                <View style={[styles.row, { marginTop: 3 }]}>
+                  <Text style={styles.body}>{patent.relevance}</Text>
+                  <ClaimTag label={patent.label} />
+                </View>
+                <CitationLine citation={patent.citation} />
+              </View>
+            ))}
+          </>
+        )}
 
         {keyRisksAndRecommendations && keyRisksAndRecommendations.keyRisks.length > 0 && (
           <>
