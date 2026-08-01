@@ -27,3 +27,14 @@ export const therapyProfileSchema = z.object({
 });
 
 export type TherapyProfileInput = z.infer<typeof therapyProfileSchema>;
+
+// Batch queue (lib/actions/create-batch.ts) — capped well below anything
+// that would let one submission monopolize assessmentRunQueue for hours;
+// 10 profiles already means ~5+ full pipeline runs queued behind the
+// concurrency cap of 2 at once.
+export const MAX_BATCH_SIZE = 10;
+
+export const batchProfileSchema = z
+  .array(therapyProfileSchema)
+  .min(1, "Add at least one therapy profile")
+  .max(MAX_BATCH_SIZE, `Batch submissions are capped at ${MAX_BATCH_SIZE} profiles at once`);

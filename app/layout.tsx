@@ -35,12 +35,20 @@ export default function RootLayout({
             <Link href="/">
               <Logo />
             </Link>
-            <Link
-              href="/assessments"
-              className="text-sm font-medium text-muted-foreground hover:text-brand-navy"
-            >
-              Assessments
-            </Link>
+            <div className="flex items-center gap-5">
+              <Link
+                href="/batch"
+                className="text-sm font-medium text-muted-foreground hover:text-brand-navy"
+              >
+                Batch
+              </Link>
+              <Link
+                href="/assessments"
+                className="text-sm font-medium text-muted-foreground hover:text-brand-navy"
+              >
+                Assessments
+              </Link>
+            </div>
           </div>
         </header>
         <main className="flex flex-1 flex-col">{children}</main>
