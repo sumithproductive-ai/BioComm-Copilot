@@ -5,27 +5,31 @@ import { cn } from "@/lib/utils";
 const CARD_CLASS =
   "mt-4 scroll-mt-4 [--card-spacing:1.25rem] rounded-2xl border border-border shadow-[0_1px_2px_rgba(15,31,61,0.04),0_12px_32px_-20px_rgba(15,31,61,0.18)]";
 
-// Every memo section card gets its own single-item Accordion (default open)
-// rather than one shared Accordion across all sections — sections are
-// independent widgets, not a group where opening one should close another.
-// PRD.md's "Collapsible memo sections in the UI for easier navigation"
-// acceptance criterion, implemented as an *option* to collapse a dense
-// section, not a default-hidden state (nothing hides on first load).
+// Every memo section card gets its own single-item Accordion rather than
+// one shared Accordion across all sections — sections are independent
+// widgets, not a group where opening one should close another. PRD.md's
+// "Collapsible memo sections in the UI for easier navigation" acceptance
+// criterion. Defaults to open (an *option* to collapse a dense section, not
+// a default-hidden state) — Source Index is the one deliberate exception
+// (see app/memo/[id]/page.tsx), since it's a long flat citation list
+// that's rarely the first thing someone reads.
 export function CollapsibleSectionCard({
   id,
   title,
   cardClassName,
+  defaultOpen = true,
   children,
 }: {
   id: string;
   title: string;
   cardClassName?: string;
+  defaultOpen?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <Card id={id} className={cn(CARD_CLASS, cardClassName)}>
       <CardContent>
-        <Accordion defaultValue={["content"]}>
+        <Accordion defaultValue={defaultOpen ? ["content"] : []}>
           <AccordionItem value="content" className="border-b-0">
             <AccordionTrigger className="py-0 hover:no-underline">
               <h2 className="text-[19px] font-bold text-brand-navy">{title}</h2>
