@@ -137,6 +137,21 @@ export function AgentProgressSection({
   if (!started) {
     return (
       <form action={formAction} className="flex flex-col gap-3">
+        <label className="flex items-start gap-2.5 rounded-[9px] border border-border bg-white px-3 py-2.5 text-sm has-[:checked]:border-brand-navy/30 has-[:checked]:bg-blue-50/50">
+          <input
+            type="checkbox"
+            name="deepResearch"
+            className="mt-0.5 size-4 shrink-0 accent-brand-navy"
+          />
+          <span>
+            <span className="font-medium text-foreground">Deep research mode</span>
+            <span className="block text-xs text-muted-foreground">
+              After the first review pass, any agent Critic flags a real problem with gets a second,
+              targeted research round before the memo is finalized. Slower (roughly 1.5–2x), more
+              accurate.
+            </span>
+          </span>
+        </label>
         <Button
           type="submit"
           disabled={pending}

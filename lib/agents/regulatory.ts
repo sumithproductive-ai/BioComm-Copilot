@@ -7,6 +7,7 @@ import type { LangfuseSpanClient } from "langfuse";
 import { regulatoryOutputSchema, type RegulatoryOutput } from "./schemas";
 import { UC_COMPETITOR_REFERENCE_LIST } from "@/lib/config/uc-competitors";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { formatReviewerFeedback } from "./reviewer-feedback";
 
 const client = new Anthropic();
 
@@ -63,6 +64,9 @@ export type RegulatoryInput = {
   modality: string;
   stage: string;
   indication: string;
+  // Deep Research Mode only (orchestrator.ts) — Critic's flags against this
+  // agent's prior pass, fed back for a targeted second pass.
+  reviewerFeedback?: string[];
 };
 
 function isToolUseBlock(block: Anthropic.ContentBlock): block is Anthropic.ToolUseBlock {
@@ -106,7 +110,7 @@ Modality: ${input.modality}
 Stage: ${input.stage}
 Indication: ${input.indication}
 
-Today's date is ${today}. Use web_search to gather real data before calling submit_findings.`,
+Today's date is ${today}. Use web_search to gather real data before calling submit_findings.${formatReviewerFeedback(input.reviewerFeedback)}`,
     },
   ];
 

@@ -175,12 +175,17 @@ export default async function MemoRunPage({
           />
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-xs font-bold tracking-wide text-brand-amber uppercase" id="therapy-profile">
+              <p className="flex items-center gap-2 text-xs font-bold tracking-wide text-brand-amber uppercase" id="therapy-profile">
                 {hasDecisionSummary
                   ? "Assessment complete"
                   : hasStartedRun
                     ? "Assessment in progress"
                     : "Assessment queued"}
+                {memoRun.deepResearch && (
+                  <span className="rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-blue-700 normal-case">
+                    Deep research
+                  </span>
+                )}
               </p>
               <h1 className="mt-2 text-[27px] font-bold text-brand-navy">
                 {memoRun.target}

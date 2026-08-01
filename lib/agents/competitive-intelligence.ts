@@ -15,6 +15,7 @@ import {
   findMissingReferenceCompetitors as findMissingReferenceCompetitorsByName,
 } from "@/lib/config/uc-competitors";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { formatReviewerFeedback } from "./reviewer-feedback";
 
 const client = new Anthropic();
 
@@ -67,6 +68,9 @@ export type CompetitiveIntelligenceInput = {
   target: string;
   modality: string;
   indication: string;
+  // Deep Research Mode only (orchestrator.ts) — Critic's flags against this
+  // agent's prior pass, fed back for a targeted second pass.
+  reviewerFeedback?: string[];
 };
 
 function isToolUseBlock(
@@ -130,7 +134,7 @@ Target: ${input.target}
 Modality: ${input.modality}
 Indication: ${input.indication}
 
-Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and web_search to gather real data before calling submit_findings.`,
+Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and web_search to gather real data before calling submit_findings.${formatReviewerFeedback(input.reviewerFeedback)}`,
     },
   ];
 

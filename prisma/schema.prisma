@@ -115,6 +115,12 @@ model MemoRun {
   // actually clicked. Purely for the live progress screen's elapsed timer.
   assessmentStartedAt DateTime? @db.Timestamptz(6)
 
+  // Opt-in at kickoff (same moment as assessmentStartedAt, set from the "Run
+  // Assessment" form) — when true, the Orchestrator gives any agent Critic
+  // flags a second, targeted research pass before Synthesis runs. Stored so
+  // the memo page can show whether a given run used it.
+  deepResearch Boolean @default(false)
+
   createdAt         DateTime @default(now()) @db.Timestamptz(6)
   langfuseSessionId String?
 

@@ -524,9 +524,16 @@ export async function getSourceIndex(memoRunId: string) {
 // callback fires. AGENT_ROSTER (lib/agents/roster.ts) is the canonical
 // list of agentName keys these rows use.
 
-export async function initializeAgentProgress(memoRunId: string, agentKeys: string[]): Promise<void> {
+export async function initializeAgentProgress(
+  memoRunId: string,
+  agentKeys: string[],
+  deepResearch = false
+): Promise<void> {
   await db.$transaction([
-    db.memoRun.update({ where: { id: memoRunId }, data: { assessmentStartedAt: new Date() } }),
+    db.memoRun.update({
+      where: { id: memoRunId },
+      data: { assessmentStartedAt: new Date(), deepResearch },
+    }),
     ...agentKeys.map((agentName) =>
       db.agentProgress.upsert({
         where: { memoRunId_agentName: { memoRunId, agentName } },
