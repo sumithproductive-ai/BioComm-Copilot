@@ -9,6 +9,7 @@ import { clinicalResearchOutputSchema, type ClinicalResearchOutput } from "./sch
 import { clinicalTrialsToolDefinition, searchClinicalTrials } from "./tools/clinicaltrials";
 import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { formatReviewerFeedback } from "./reviewer-feedback";
 
 const client = new Anthropic();
 
@@ -64,6 +65,9 @@ export type ClinicalResearchInput = {
   stage: string;
   indication: string;
   context?: string;
+  // Deep Research Mode only (orchestrator.ts) — Critic's flags against this
+  // agent's prior pass, fed back for a targeted second pass.
+  reviewerFeedback?: string[];
 };
 
 function isToolUseBlock(
@@ -126,7 +130,7 @@ Stage: ${input.stage}
 Indication: ${input.indication}
 ${input.context ? `Additional context: ${input.context}` : ""}
 
-Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather real data before calling submit_findings.`,
+Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather real data before calling submit_findings.${formatReviewerFeedback(input.reviewerFeedback)}`,
     },
   ];
 

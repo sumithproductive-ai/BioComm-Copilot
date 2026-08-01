@@ -32,16 +32,19 @@ export type RunAssessmentState = {
 export async function runAssessment(
   memoRunId: string,
   _prevState: RunAssessmentState,
-  _formData: FormData
+  formData: FormData
 ): Promise<RunAssessmentState> {
   const memoRun = await db.memoRun.findUnique({ where: { id: memoRunId } });
   if (!memoRun) {
     return { error: "Run not found." };
   }
 
+  const deepResearch = formData.get("deepResearch") === "on";
+
   await initializeAgentProgress(
     memoRunId,
-    AGENT_ROSTER.map((agent) => agent.key)
+    AGENT_ROSTER.map((agent) => agent.key),
+    deepResearch
   );
 
   after(async () => {
@@ -53,6 +56,7 @@ export async function runAssessment(
           stage: memoRun.stage,
           indication: memoRun.indication,
           context: memoRun.context ?? undefined,
+          deepResearch,
         },
         {
           onAgentStatusChange: (agentName, status, info) =>

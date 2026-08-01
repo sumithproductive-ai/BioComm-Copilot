@@ -10,6 +10,7 @@ import type { LangfuseSpanClient } from "langfuse";
 import { dealComparablesOutputSchema, type DealComparablesOutput } from "./schemas";
 import { secEdgarSearchToolDefinition, searchSecFilings } from "./tools/sec-edgar";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { formatReviewerFeedback } from "./reviewer-feedback";
 
 const client = new Anthropic();
 
@@ -66,6 +67,9 @@ export type DealComparablesInput = {
   modality: string;
   stage: string;
   indication: string;
+  // Deep Research Mode only (orchestrator.ts) — Critic's flags against this
+  // agent's prior pass, fed back for a targeted second pass.
+  reviewerFeedback?: string[];
 };
 
 function isToolUseBlock(block: Anthropic.ContentBlock): block is Anthropic.ToolUseBlock {
@@ -106,7 +110,7 @@ Modality: ${input.modality}
 Stage: ${input.stage}
 Indication: ${input.indication}
 
-Today's date is ${today}. Use search_sec_filings and web_search to gather real data before calling submit_findings. Remember: if you find no verifiable, disclosed deal, set noCompFound: true with a real explanation rather than fabricating one.`,
+Today's date is ${today}. Use search_sec_filings and web_search to gather real data before calling submit_findings. Remember: if you find no verifiable, disclosed deal, set noCompFound: true with a real explanation rather than fabricating one.${formatReviewerFeedback(input.reviewerFeedback)}`,
     },
   ];
 

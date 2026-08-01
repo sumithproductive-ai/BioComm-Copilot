@@ -34,6 +34,25 @@ export type OrchestratorInput = {
   stage: string;
   indication: string;
   context?: string;
+  // Opt-in Deep Research Mode: after the first Critic pass, any research
+  // agent with a real flag against it gets a second, targeted pass fed that
+  // specific feedback, then Critic re-reviews the updated outputs before
+  // Synthesis runs. Off by default — costs roughly 1.5-2x runtime/API spend
+  // when flags exist, nothing extra when Critic finds nothing to flag.
+  deepResearch?: boolean;
+};
+
+// Critic's system prompt (critic.ts) uses these exact "section" strings —
+// this is the one place that maps them back to the researchOutputs/
+// AGENT_ROSTER key so a flag can be routed to the agent that should address
+// it. Sections with no entry here (e.g. a future agent) are simply skipped
+// by the deep-research pass, not an error.
+const SECTION_TO_AGENT_KEY: Partial<Record<string, keyof ResearchOutputs>> = {
+  "Clinical Research": "clinical",
+  "Competitive Intelligence": "competitive",
+  "Commercial Opportunity": "commercial",
+  Regulatory: "regulatory",
+  "Deal Comparables": "dealComparables",
 };
 
 // Story 2 — reports live status transitions as they happen, separate from
@@ -293,9 +312,159 @@ export async function runOrchestrator(
     (span) => runCriticAgent(criticInput, span),
     onAgentStatusChange
   );
-  const criticStatus = criticRunResult.status;
-  const criticOutput = criticRunResult.output;
-  const criticNote = criticRunResult.note;
+  let criticStatus = criticRunResult.status;
+  let criticOutput = criticRunResult.output;
+  let criticNote = criticRunResult.note;
+
+  // Deep Research Mode (opt-in): give every agent Critic actually found a
+  // real problem with one more targeted pass — fed the specific flag, not
+  // just "try harder" — before Synthesis runs, then re-review with Critic so
+  // Synthesis and the final Reviewer Notes section see the corrected
+  // picture, not the stale first-pass flags. Costs nothing extra when Critic
+  // finds nothing wrong (flags.length === 0 skips this whole block).
+  if (input.deepResearch && criticOutput && criticOutput.flags.length > 0) {
+    const flagsByAgent = new Map<keyof ResearchOutputs, string[]>();
+    for (const flag of criticOutput.flags) {
+      const agentKey = SECTION_TO_AGENT_KEY[flag.section];
+      // Only agents that actually produced output the first time get a
+      // deep-research pass — a section that failed outright already went
+      // through MAX_RETRIES_PER_AGENT; that's a different problem than this
+      // feature addresses.
+      if (!agentKey || researchOutputs[agentKey] === null) continue;
+      const existing = flagsByAgent.get(agentKey) ?? [];
+      existing.push(`[${flag.type}] ${flag.description}`);
+      flagsByAgent.set(agentKey, existing);
+    }
+
+    // Each flagged agent's second pass is independent — deliberately not
+    // chained (e.g. Commercial doesn't re-reconcile against a redone
+    // Competitive Intelligence output). Chaining deep-research passes
+    // together would risk an unbounded cascade for what's meant to be a
+    // bounded "one more careful look," not a second full pipeline.
+    const deepResearchTasks: Promise<void>[] = [];
+
+    const clinicalFeedback = flagsByAgent.get("clinical");
+    if (clinicalFeedback) {
+      deepResearchTasks.push(
+        runWithRetries(
+          runTrace,
+          "clinical",
+          (span) => runClinicalResearchAgent({ ...clinicalInput, reviewerFeedback: clinicalFeedback }, span),
+          onAgentStatusChange
+        ).then((result) => {
+          if (result.status === "complete") {
+            agentStatuses.clinical = result.status;
+            researchOutputs.clinical = result.output;
+            agentNotes.clinical = "Deep research: revised after reviewer feedback";
+          }
+        })
+      );
+    }
+
+    const competitiveFeedback = flagsByAgent.get("competitive");
+    if (competitiveFeedback) {
+      deepResearchTasks.push(
+        runWithRetries(
+          runTrace,
+          "competitive",
+          (span) =>
+            runCompetitiveIntelligenceAgent(
+              { ...competitiveInput, reviewerFeedback: competitiveFeedback },
+              span
+            ),
+          onAgentStatusChange
+        ).then((result) => {
+          if (result.status === "complete") {
+            agentStatuses.competitive = result.status;
+            researchOutputs.competitive = result.output;
+            agentNotes.competitive = "Deep research: revised after reviewer feedback";
+          }
+        })
+      );
+    }
+
+    const commercialFeedback = flagsByAgent.get("commercial");
+    if (commercialFeedback) {
+      deepResearchTasks.push(
+        runWithRetries(
+          runTrace,
+          "commercial",
+          (span) =>
+            runCommercialOpportunityAgent(
+              { ...commercialInput, reviewerFeedback: commercialFeedback },
+              span
+            ),
+          onAgentStatusChange
+        ).then((result) => {
+          if (result.status === "complete") {
+            agentStatuses.commercial = result.status;
+            researchOutputs.commercial = result.output;
+            agentNotes.commercial = "Deep research: revised after reviewer feedback";
+          }
+        })
+      );
+    }
+
+    const regulatoryFeedback = flagsByAgent.get("regulatory");
+    if (regulatoryFeedback) {
+      deepResearchTasks.push(
+        runWithRetries(
+          runTrace,
+          "regulatory",
+          (span) => runRegulatoryAgent({ ...regulatoryInput, reviewerFeedback: regulatoryFeedback }, span),
+          onAgentStatusChange
+        ).then((result) => {
+          if (result.status === "complete") {
+            agentStatuses.regulatory = result.status;
+            researchOutputs.regulatory = result.output;
+            agentNotes.regulatory = "Deep research: revised after reviewer feedback";
+          }
+        })
+      );
+    }
+
+    const dealComparablesFeedback = flagsByAgent.get("dealComparables");
+    if (dealComparablesFeedback) {
+      deepResearchTasks.push(
+        runWithRetries(
+          runTrace,
+          "dealComparables",
+          (span) =>
+            runDealComparablesAgent(
+              { ...dealComparablesInput, reviewerFeedback: dealComparablesFeedback },
+              span
+            ),
+          onAgentStatusChange
+        ).then((result) => {
+          if (result.status === "complete") {
+            agentStatuses.dealComparables = result.status;
+            researchOutputs.dealComparables = result.output;
+            agentNotes.dealComparables = "Deep research: revised after reviewer feedback";
+          }
+        })
+      );
+    }
+
+    if (deepResearchTasks.length > 0) {
+      await Promise.all(deepResearchTasks);
+
+      const recheckInput: CriticInput = {
+        target: input.target,
+        modality: input.modality,
+        indication: input.indication,
+        researchOutputs,
+      };
+      const recheckResult = await runWithRetries(
+        runTrace,
+        "critic",
+        (span) => runCriticAgent(recheckInput, span),
+        onAgentStatusChange
+      );
+      criticStatus = recheckResult.status;
+      criticOutput = recheckResult.output;
+      criticNote = recheckResult.note;
+    }
+  }
 
   // Synthesis runs last of all — it compiles Critic's flags into Key Risks,
   // so it needs Critic to have already run (AGENT_PLAN.md §4.7's rationale
