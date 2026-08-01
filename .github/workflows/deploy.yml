@@ -17,7 +17,10 @@
 # it, every agent's `new Anthropic()` client throws at startup (all agents
 # fail identically, not a partial failure), so it has to be pushed on every
 # deploy from a real GitHub Secret (unlike the five variables above, this
-# value genuinely is sensitive).
+# value genuinely is sensitive). Same story for MCP_BEARER_TOKEN (a random
+# shared secret gating the /api/[transport] MCP endpoint, which otherwise
+# lets anyone with the URL read every assessment ever run) — without it set,
+# that endpoint rejects every request rather than failing open.
 name: deploy
 on:
   push:
@@ -49,7 +52,9 @@ jobs:
           az containerapp secret set \
             --resource-group rg-students-platform \
             --name ca-${{ vars.STUDENT }} \
-            --secrets anthropic-api-key="${{ secrets.ANTHROPIC_API_KEY }}"
+            --secrets \
+              anthropic-api-key="${{ secrets.ANTHROPIC_API_KEY }}" \
+              mcp-bearer-token="${{ secrets.MCP_BEARER_TOKEN }}"
 
       - name: Deploy to Container App
         run: |
@@ -57,4 +62,6 @@ jobs:
             --resource-group rg-students-platform \
             --name ca-${{ vars.STUDENT }} \
             --image ${{ vars.ACR_NAME }}.azurecr.io/${{ vars.STUDENT }}/web:${{ github.sha }} \
-            --set-env-vars ANTHROPIC_API_KEY=secretref:anthropic-api-key
+            --set-env-vars \
+              ANTHROPIC_API_KEY=secretref:anthropic-api-key \
+              MCP_BEARER_TOKEN=secretref:mcp-bearer-token

@@ -3,11 +3,17 @@
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { therapyProfileSchema } from "@/lib/validations/therapy-profile";
+import { checkRateLimit, getClientKey, RateLimitError } from "@/lib/rate-limit";
 
 export type CreateMemoRunState = {
   errors?: Partial<Record<"target" | "modality" | "stage" | "indication" | "context", string[]>>;
   message?: string;
 };
+
+// Cheap on its own (just a DB row — the real cost happens at "Run
+// Assessment," already limited in run-assessment.ts), but a generous bound
+// still guards against scripted DB spam.
+const CREATE_MEMO_RUN_LIMIT = { maxRequests: 20, windowMs: 60 * 1000 };
 
 // Story 1 (USER_STORIES.md): validates input and creates the run. Kicking off
 // the Orchestrator Agent happens in a later phase (AGENT_PLAN.md §4.1) — for now
@@ -16,6 +22,13 @@ export async function createMemoRun(
   _prevState: CreateMemoRunState,
   formData: FormData
 ): Promise<CreateMemoRunState> {
+  try {
+    checkRateLimit(await getClientKey(), CREATE_MEMO_RUN_LIMIT);
+  } catch (err) {
+    if (err instanceof RateLimitError) return { message: err.message };
+    throw err;
+  }
+
   const parsed = therapyProfileSchema.safeParse({
     target: formData.get("target"),
     modality: formData.get("modality"),

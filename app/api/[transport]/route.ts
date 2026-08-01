@@ -7,7 +7,8 @@
 // that already exists and is exercised by the memo page UI — no new
 // data-access logic, just a second surface onto it.
 
-import { createMcpHandler } from "mcp-handler";
+import { createMcpHandler, withMcpAuth } from "mcp-handler";
+import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
@@ -185,4 +186,32 @@ const handler = createMcpHandler(
   }
 );
 
-export { handler as GET, handler as POST };
+// Security hardening: this endpoint exposes every assessment ever run
+// (target, full memo contents, decision summaries) with no query scoping —
+// before this, anyone with the URL could read the team's entire
+// competitor-analysis/patent-value history. Bearer-token auth, not a real
+// OAuth flow — MCP_BEARER_TOKEN is a single shared secret (same shape as
+// ANTHROPIC_API_KEY: a GitHub Secret, pushed to the Container App on
+// deploy), good enough until Google OAuth covers the whole app and this
+// can check a real session instead.
+// Plain !== on a secret comparison leaks timing information proportional to
+// how many leading characters match — timingSafeEqual avoids that. Length
+// must be checked first since timingSafeEqual throws (rather than
+// returning false) on mismatched buffer lengths.
+function isValidToken(bearerToken: string, expected: string): boolean {
+  const a = Buffer.from(bearerToken);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+const authHandler = withMcpAuth(
+  handler,
+  (_req, bearerToken) => {
+    const expected = process.env.MCP_BEARER_TOKEN;
+    if (!expected || !bearerToken || !isValidToken(bearerToken, expected)) return undefined;
+    return { token: bearerToken, clientId: "biocomm-mcp-client", scopes: [] };
+  },
+  { required: true }
+);
+
+export { authHandler as GET, authHandler as POST };
