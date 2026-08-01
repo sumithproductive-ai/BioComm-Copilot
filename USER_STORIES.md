@@ -1,7 +1,7 @@
 # Backlog: BioComm Copilot
 
 **Format:** User Stories
-**Total stories:** 14
+**Total stories:** 19 (1–14 are the original Demo Day backlog; 15–19 added post-Demo Day, see status note before Story 15)
 **Persona coverage:** Maya (BD Analyst), David (Head of BD), Priya (CEO), Demo Day Judge
 
 ---
@@ -196,6 +196,71 @@ Acceptance Criteria:
 - [ ] Traces are viewable in the Langfuse dashboard without additional configuration
 
 Priority: P0 | Effort: M | Dependencies: All agents
+
+---
+
+## Post-Demo Day additions (2026-08-01)
+
+Stories 1–14 above are the original Demo Day backlog, delivered as written. Stories 15–19 below were added after Demo Day as new confirmed scope.
+
+### Story 15: Review the Patent Landscape
+**As a BD analyst, I want a Patent Landscape section citing real patents (composition-of-matter, method-of-use, blocking patents) so that I can factor freedom-to-operate risk into my assessment without a separate patent search.**
+
+Acceptance Criteria:
+- [x] Patent Landscape Agent (EPO Open Patent Services) runs as a 6th research agent, same tier as the original 5
+- [x] Every patent finding carries a real citation, checked against a real search result this run
+- [x] Kept informational only — never factored into the Confidence Score, so past/future scores stay comparable
+
+Priority: P1 | Effort: L | Dependencies: EPO OPS credentials (live verification pending as of this writing)
+
+---
+
+### Story 16: Trust Citations Are Real, Not Just Well-Formed
+**As a BD analyst, I want every citation to be checked against an actual search/tool result from that run, not just validated for shape, so that a well-formatted but fabricated URL can't slip through.**
+
+Acceptance Criteria:
+- [x] Every research agent tracks real hostnames seen from actual tool/web_search results during its run
+- [x] A citation whose hostname never appeared in a real result is rejected before the agent's output is accepted
+- [x] Verified with real runs and spot-checked citations against live sources, not just schema validation
+
+Priority: P0 | Effort: M | Dependencies: All research agents
+
+---
+
+### Story 17: Cite the Primary Filing, Not Just News Coverage
+**As a BD analyst, I want deal terms and competitor disclosures cited from the actual SEC filing where possible, so that I'm not relying on secondary news coverage for facts that have a primary source.**
+
+Acceptance Criteria:
+- [x] Deal Comparables and Competitive Intelligence can search SEC EDGAR's full-text search (no API key needed) and cite the real filing document
+- [x] Verified live: a real run cited a real 10-Q, confirmed the filing URL resolves and the company matches
+
+Priority: P1 | Effort: M | Dependencies: None (SEC EDGAR is public, no registration)
+
+---
+
+### Story 18: Get a Second Look on Flagged Findings
+**As a BD analyst, I want the option to have Critic-flagged sections get a real second research pass before the memo is finalized, so that I can trade speed for accuracy when it matters.**
+
+Acceptance Criteria:
+- [x] Opt-in checkbox ("Deep Research Mode") on the Run Assessment screen and batch queue
+- [x] Only agents Critic actually flagged get a second pass, fed the specific flag text
+- [x] Critic re-reviews the corrected outputs before Synthesis runs
+- [x] Verified live: a real run correctly re-ran only the flagged agents and skipped the rest
+
+Priority: P1 | Effort: L | Dependencies: Critic Agent
+
+---
+
+### Story 19: Queue Multiple Assessments Without Babysitting Each One
+**As a BD analyst evaluating several assets, I want to submit multiple therapy profiles at once and have them run automatically in the background, so that I don't have to manually trigger and monitor each one.**
+
+Acceptance Criteria:
+- [x] `/batch` page accepts multiple therapy profiles in one submission
+- [x] Runs are concurrency-limited (2 at a time) and share capacity fairly with the single manual "Run Assessment" button
+- [x] Each run shows correctly as Queued until it actually starts, not the moment it's submitted
+- [x] Verified live: real batch submission, confirmed concurrency cap via timing, watched a real run complete end-to-end
+
+Priority: P1 | Effort: M | Dependencies: None
 
 ---
 

@@ -3,6 +3,8 @@
 **Companion to AGENT_PLAN.md §4 (agent output schemas) and §6 (shared infrastructure)**
 *Scope: the persisted domain content of one memo run — therapy input, research agent outputs, critic flags, and the synthesized memo. Agent execution/orchestration state (statuses, retries, elapsed time per call) is intentionally NOT modeled here; that is owned by Langfuse per PRD.md's observability requirement.*
 
+**Post-Demo Day update (2026-08-01):** the diagram below is the original schema and is not redrawn here. Real additions since Demo Day, per real migrations in `prisma/migrations/`: a `Patent` table + `PatentStatus` enum and `MemoRun.patentLandscapeSummary`/`patentLandscapeLabel` (Patent Landscape Agent, informational only), and `MemoRun.deepResearch` (Boolean, opt-in flag for Deep Research Mode, set at run kickoff). `prisma/schema.prisma` is the actual source of truth for the current schema; treat this document as the design rationale for the original tables, not a live mirror.
+
 ---
 
 ## Scope decisions
