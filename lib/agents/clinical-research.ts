@@ -126,7 +126,20 @@ export async function runClinicalResearchAgent(
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
-      content: `Research this therapy asset and produce clinical landscape findings.
+      // cache_control on this whole block, not a plain string — this exact
+      // content is resent unchanged on every iteration within this attempt
+      // (MAX_ITERATIONS below) and again on every Orchestrator retry of
+      // this agent, since a retry rebuilds the same input from scratch.
+      // Without caching, a large supplementaryDocuments block (see
+      // lib/pdf-extract.ts) gets billed at full input-token price on every
+      // one of those resends — confirmed live: caching turns a repeat send
+      // of an ~8000-token block into a ~10%-cost cache read, not another
+      // full-price charge. Real fix for a real multiplication problem
+      // (comprehensive review, 2026-08-01), not just a smaller size cap.
+      content: [
+        {
+          type: "text",
+          text: `Research this therapy asset and produce clinical landscape findings.
 
 Target: ${input.target}
 Modality: ${input.modality}
@@ -135,6 +148,9 @@ Indication: ${input.indication}
 ${input.context ? `Additional context: ${input.context}` : ""}
 
 Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather real data before calling submit_findings.${formatReviewerFeedback(input.reviewerFeedback)}${formatSupplementaryDocuments(input.supplementaryDocuments)}`,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
     },
   ];
 
@@ -153,7 +169,9 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
       // Intelligence run (stop_reason: max_tokens, cut off before it could
       // act on research it had already gathered) — same risk here.
       max_tokens: 8192,
-      system: SYSTEM_PROMPT,
+      // Cached too — static per agent, resent unchanged on every iteration
+      // and retry (same reasoning as the initial message above).
+      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: isLastChance
         ? [submitFindingsTool]
         : [clinicalTrialsToolDefinition, pubmedToolDefinition, webSearchTool, submitFindingsTool],

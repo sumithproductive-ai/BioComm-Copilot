@@ -132,13 +132,24 @@ export async function runCompetitiveIntelligenceAgent(
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
-      content: `Research the competitive landscape for this therapy asset.
+      // cache_control — same reasoning as clinical-research.ts: this exact
+      // content is resent unchanged on every iteration and every
+      // Orchestrator retry, so caching it turns repeat sends of a large
+      // supplementaryDocuments block into ~10%-cost cache reads instead of
+      // full-price resends (comprehensive review, 2026-08-02).
+      content: [
+        {
+          type: "text",
+          text: `Research the competitive landscape for this therapy asset.
 
 Target: ${input.target}
 Modality: ${input.modality}
 Indication: ${input.indication}
 
 Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and web_search to gather real data before calling submit_findings.${formatReviewerFeedback(input.reviewerFeedback)}${formatSupplementaryDocuments(input.supplementaryDocuments)}`,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
     },
   ];
 
@@ -158,7 +169,7 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
       // gathered) — a plausible cause of the empty-output runs seen before
       // this fix.
       max_tokens: 8192,
-      system: SYSTEM_PROMPT,
+      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: isLastChance
         ? [submitFindingsTool]
         : [clinicalTrialsToolDefinition, secEdgarSearchToolDefinition, webSearchTool, submitFindingsTool],

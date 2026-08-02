@@ -217,7 +217,10 @@ export async function runSynthesisAgent(
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
-      content: `Compile the Key Risks and Route Recommendations for this memo.
+      content: [
+        {
+          type: "text",
+          text: `Compile the Key Risks and Route Recommendations for this memo.
 
 Target: ${input.target}
 Modality: ${input.modality}
@@ -231,6 +234,9 @@ Critic Agent review (null if Critic didn't run):
 ${JSON.stringify(input.criticOutput, null, 2)}
 
 Call submit_findings with your compiled Key Risks and Route Recommendations.`,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
     },
   ];
 
@@ -246,7 +252,7 @@ Call submit_findings with your compiled Key Risks and Route Recommendations.`,
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 8192,
-      system: SYSTEM_PROMPT,
+      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: [submitFindingsTool],
       tool_choice: { type: "tool", name: "submit_findings" },
       messages,

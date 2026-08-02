@@ -55,7 +55,10 @@ function DocumentUpload() {
           <span className="text-sm font-medium text-foreground">Supplementary documents</span>
           <span className="block text-xs text-muted-foreground">
             Optional — add up to {MAX_DOCUMENT_COUNT} PDFs (data room materials, internal decks) for
-            additional context. Read once for this run, never saved.
+            additional context. Read once for this run, never saved. Each file up to{" "}
+            {formatBytes(MAX_DOCUMENT_BYTES)}; across all files combined, roughly the first 20-25 pages of
+            text are used. If anything is skipped or trimmed to fit, we&apos;ll note exactly what on the
+            results page.
           </span>
         </div>
         <span className="flex shrink-0 items-center gap-1.5 rounded-[9px] border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-brand-navy hover:bg-slate-50">

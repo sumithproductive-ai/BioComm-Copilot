@@ -115,7 +115,7 @@ async function runFindingsLoop(
       // this codebase — 8192 is the default for every agent, not just the
       // ones that look complex up front (build-agent skill lesson #6).
       max_tokens: 8192,
-      system: SYSTEM_PROMPT,
+      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: isLastChance
         ? [submitFindingsTool]
         : [pubmedToolDefinition, webSearchTool, submitFindingsTool],
@@ -266,7 +266,7 @@ ${JSON.stringify(draft)}`,
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 8192,
-    system: SYSTEM_PROMPT,
+    system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
     tools: [submitFindingsTool],
     tool_choice: { type: "tool", name: "submit_findings" },
     messages,
@@ -314,13 +314,19 @@ export async function runCommercialOpportunityAgent(
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
-      content: `Research the commercial opportunity for this therapy asset.
+      content: [
+        {
+          type: "text",
+          text: `Research the commercial opportunity for this therapy asset.
 
 Target: ${input.target}
 Modality: ${input.modality}
 Indication: ${input.indication}
 
 Today's date is ${today}. Use search_pubmed and web_search to gather real data before calling submit_findings.${formatReviewerFeedback(input.reviewerFeedback)}${formatSupplementaryDocuments(input.supplementaryDocuments)}`,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
     },
   ];
 

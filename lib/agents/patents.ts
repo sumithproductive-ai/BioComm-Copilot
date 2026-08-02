@@ -97,7 +97,10 @@ export async function runPatentsAgent(
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
-      content: `Research patents relevant to this therapy asset.
+      content: [
+        {
+          type: "text",
+          text: `Research patents relevant to this therapy asset.
 
 Target: ${input.target}
 Modality: ${input.modality}
@@ -105,6 +108,9 @@ Indication: ${input.indication}
 ${input.context ? `Additional context: ${input.context}` : ""}
 
 Today's date is ${today}. Use search_patents to gather real data before calling submit_findings.${formatReviewerFeedback(input.reviewerFeedback)}${formatSupplementaryDocuments(input.supplementaryDocuments)}`,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
     },
   ];
 
@@ -120,7 +126,7 @@ Today's date is ${today}. Use search_patents to gather real data before calling 
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 8192,
-      system: SYSTEM_PROMPT,
+      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: isLastChance
         ? [submitFindingsTool]
         : [epoPatentSearchToolDefinition, webSearchTool, submitFindingsTool],

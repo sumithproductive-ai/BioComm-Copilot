@@ -24,13 +24,28 @@ const RUN_ASSESSMENT_LIMIT = { maxRequests: 5, windowMs: 10 * 60 * 1000 };
 // text (see lib/agents/supplementary-documents.ts). The combined cap is a
 // *total* across every uploaded file, not per-file × count — a real risk
 // flagged in review: this text gets duplicated into 6 separate agent
-// prompts, so an uncapped total multiplies fast. 80k combined chars (~20k
-// tokens) × 6 agents is already a meaningful addition to a run's cost; a
-// higher cap wasn't worth the latency/spend for what's meant to be
-// supplementary context, not the primary research input.
+// prompts, so an uncapped total multiplies fast.
+//
+// That "6 agents" multiplier is the one caching below (clinical-research.ts
+// etc. — cache_control on each agent's initial message + system prompt)
+// does NOT remove: each agent's prompt differs, so each still creates its
+// own cache entry once and pays full price for it. What caching DOES remove
+// is the multiplier on top of that: each agent's iteration loop
+// (MAX_ITERATIONS = 10) and the Orchestrator's retry loop
+// (MAX_RETRIES_PER_AGENT = 2, so up to 3 attempts) used to resend this same
+// text at full input-token price on every single call — up to 30x per
+// agent, 180x total, before caching. With cache_control, only the first
+// call per agent/attempt pays to write the cache; every later iteration or
+// retry within the ~5-minute cache TTL reads it back at roughly 10% of
+// input-token price. That cut the real cost risk enough to relax the 80k
+// figure we'd tightened to under the old no-caching math back up somewhat —
+// landing at 100k rather than reverting all the way to the original 150k,
+// since the still-uncached "×6 agents" floor and a genuine accuracy
+// argument (a smaller, denser context keeps each agent focused) both still
+// argue against maximizing this.
 const MAX_DOCUMENT_COUNT = 5;
 const MAX_DOCUMENT_BYTES = 15 * 1024 * 1024; // 15MB, per file, raw PDF size
-const MAX_COMBINED_EXTRACTED_CHARS = 80_000;
+const MAX_COMBINED_EXTRACTED_CHARS = 100_000;
 
 type DocumentExtractionResult = {
   text: string | undefined;

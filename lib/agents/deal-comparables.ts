@@ -107,7 +107,10 @@ export async function runDealComparablesAgent(
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
-      content: `Research comparable deals for this therapy asset.
+      content: [
+        {
+          type: "text",
+          text: `Research comparable deals for this therapy asset.
 
 Target: ${input.target}
 Modality: ${input.modality}
@@ -115,6 +118,9 @@ Stage: ${input.stage}
 Indication: ${input.indication}
 
 Today's date is ${today}. Use search_sec_filings and web_search to gather real data before calling submit_findings. Remember: if you find no verifiable, disclosed deal, set noCompFound: true with a real explanation rather than fabricating one.${formatReviewerFeedback(input.reviewerFeedback)}${formatSupplementaryDocuments(input.supplementaryDocuments)}`,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
     },
   ];
 
@@ -133,7 +139,7 @@ Today's date is ${today}. Use search_sec_filings and web_search to gather real d
       // ones that look complex up front — 4096 has confirmed to truncate
       // mid-"thinking" on other agents.
       max_tokens: 8192,
-      system: SYSTEM_PROMPT,
+      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: isLastChance
         ? [submitFindingsTool]
         : [secEdgarSearchToolDefinition, webSearchTool, submitFindingsTool],
