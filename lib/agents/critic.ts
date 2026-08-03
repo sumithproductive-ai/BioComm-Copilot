@@ -136,7 +136,10 @@ export async function runCriticAgent(
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
-      content: `Review these research outputs for the following therapy asset.
+      content: [
+        {
+          type: "text",
+          text: `Review these research outputs for the following therapy asset.
 
 Target: ${input.target}
 Modality: ${input.modality}
@@ -147,6 +150,9 @@ Research outputs (any section may be null if that agent failed to produce output
 ${JSON.stringify(input.researchOutputs, null, 2)}
 
 Run all 7 checks from your system prompt and call submit_findings with every flag you find.`,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
     },
   ];
 
@@ -163,7 +169,7 @@ Run all 7 checks from your system prompt and call submit_findings with every fla
       // input here is larger than any single research agent's (all 5
       // outputs at once), so there's no reason to go lower.
       max_tokens: 8192,
-      system: SYSTEM_PROMPT,
+      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: [submitFindingsTool],
       tool_choice: { type: "tool", name: "submit_findings" },
       messages,

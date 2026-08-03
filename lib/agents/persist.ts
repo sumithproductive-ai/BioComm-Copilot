@@ -579,12 +579,19 @@ export async function getSourceIndex(memoRunId: string) {
 export async function initializeAgentProgress(
   memoRunId: string,
   agentKeys: string[],
-  deepResearch = false
+  deepResearch = false,
+  supplementaryDocumentCount = 0,
+  supplementaryDocumentNote?: string
 ): Promise<void> {
   await db.$transaction([
     db.memoRun.update({
       where: { id: memoRunId },
-      data: { assessmentStartedAt: new Date(), deepResearch },
+      data: {
+        assessmentStartedAt: new Date(),
+        deepResearch,
+        supplementaryDocumentCount,
+        supplementaryDocumentNote,
+      },
     }),
     ...agentKeys.map((agentName) =>
       db.agentProgress.upsert({

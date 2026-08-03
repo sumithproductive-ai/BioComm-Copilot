@@ -8,6 +8,7 @@ import { regulatoryOutputSchema, type RegulatoryOutput } from "./schemas";
 import { UC_COMPETITOR_REFERENCE_LIST } from "@/lib/config/uc-competitors";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
+import { formatSupplementaryDocuments } from "./supplementary-documents";
 
 const client = new Anthropic();
 
@@ -67,6 +68,9 @@ export type RegulatoryInput = {
   // Deep Research Mode only (orchestrator.ts) — Critic's flags against this
   // agent's prior pass, fed back for a targeted second pass.
   reviewerFeedback?: string[];
+  // User-uploaded PDF text, extracted before this run started (never
+  // persisted — see lib/pdf-extract.ts and run-assessment.ts).
+  supplementaryDocuments?: string;
 };
 
 function isToolUseBlock(block: Anthropic.ContentBlock): block is Anthropic.ToolUseBlock {
@@ -103,14 +107,20 @@ export async function runRegulatoryAgent(
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
-      content: `Research the regulatory landscape for this therapy asset.
+      content: [
+        {
+          type: "text",
+          text: `Research the regulatory landscape for this therapy asset.
 
 Target: ${input.target}
 Modality: ${input.modality}
 Stage: ${input.stage}
 Indication: ${input.indication}
 
-Today's date is ${today}. Use web_search to gather real data before calling submit_findings.${formatReviewerFeedback(input.reviewerFeedback)}`,
+Today's date is ${today}. Use web_search to gather real data before calling submit_findings.${formatReviewerFeedback(input.reviewerFeedback)}${formatSupplementaryDocuments(input.supplementaryDocuments)}`,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
     },
   ];
 
@@ -129,7 +139,7 @@ Today's date is ${today}. Use web_search to gather real data before calling subm
       // ones that look complex up front — 4096 has confirmed to truncate
       // mid-"thinking" on other agents.
       max_tokens: 8192,
-      system: SYSTEM_PROMPT,
+      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: isLastChance ? [submitFindingsTool] : [webSearchTool, submitFindingsTool],
       tool_choice: isLastChance ? { type: "tool", name: "submit_findings" } : { type: "auto" },
       messages,

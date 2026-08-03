@@ -11,6 +11,7 @@ import { dealComparablesOutputSchema, type DealComparablesOutput } from "./schem
 import { secEdgarSearchToolDefinition, searchSecFilings } from "./tools/sec-edgar";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
+import { formatSupplementaryDocuments } from "./supplementary-documents";
 
 const client = new Anthropic();
 
@@ -70,6 +71,9 @@ export type DealComparablesInput = {
   // Deep Research Mode only (orchestrator.ts) — Critic's flags against this
   // agent's prior pass, fed back for a targeted second pass.
   reviewerFeedback?: string[];
+  // User-uploaded PDF text, extracted before this run started (never
+  // persisted — see lib/pdf-extract.ts and run-assessment.ts).
+  supplementaryDocuments?: string;
 };
 
 function isToolUseBlock(block: Anthropic.ContentBlock): block is Anthropic.ToolUseBlock {
@@ -103,14 +107,20 @@ export async function runDealComparablesAgent(
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
-      content: `Research comparable deals for this therapy asset.
+      content: [
+        {
+          type: "text",
+          text: `Research comparable deals for this therapy asset.
 
 Target: ${input.target}
 Modality: ${input.modality}
 Stage: ${input.stage}
 Indication: ${input.indication}
 
-Today's date is ${today}. Use search_sec_filings and web_search to gather real data before calling submit_findings. Remember: if you find no verifiable, disclosed deal, set noCompFound: true with a real explanation rather than fabricating one.${formatReviewerFeedback(input.reviewerFeedback)}`,
+Today's date is ${today}. Use search_sec_filings and web_search to gather real data before calling submit_findings. Remember: if you find no verifiable, disclosed deal, set noCompFound: true with a real explanation rather than fabricating one.${formatReviewerFeedback(input.reviewerFeedback)}${formatSupplementaryDocuments(input.supplementaryDocuments)}`,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
     },
   ];
 
@@ -129,7 +139,7 @@ Today's date is ${today}. Use search_sec_filings and web_search to gather real d
       // ones that look complex up front — 4096 has confirmed to truncate
       // mid-"thinking" on other agents.
       max_tokens: 8192,
-      system: SYSTEM_PROMPT,
+      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: isLastChance
         ? [submitFindingsTool]
         : [secEdgarSearchToolDefinition, webSearchTool, submitFindingsTool],

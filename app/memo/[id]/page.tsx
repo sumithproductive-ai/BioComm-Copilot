@@ -196,7 +196,18 @@ export default async function MemoRunPage({
                     Deep research
                   </span>
                 )}
+                {memoRun.supplementaryDocumentCount > 0 && (
+                  <span className="rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-amber-700 normal-case">
+                    +{memoRun.supplementaryDocumentCount} supplementary document
+                    {memoRun.supplementaryDocumentCount === 1 ? "" : "s"}
+                  </span>
+                )}
               </p>
+              {memoRun.supplementaryDocumentNote && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Document upload note: {memoRun.supplementaryDocumentNote}
+                </p>
+              )}
               <h1 className="mt-2 text-[27px] font-bold text-brand-navy">
                 {memoRun.target}
               </h1>

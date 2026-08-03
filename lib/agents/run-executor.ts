@@ -35,14 +35,24 @@ export type ExecutableMemoRun = {
 
 export async function executeAssessmentRun(
   memoRun: ExecutableMemoRun,
-  deepResearch: boolean
+  deepResearch: boolean,
+  // Text already extracted from user-uploaded PDFs before this was called
+  // (see lib/pdf-extract.ts) — never the files themselves.
+  // supplementaryDocumentCount/Note are only for the memo's transparency
+  // note (how many documents were used, and what was skipped/truncated and
+  // why), not a record of what was uploaded.
+  supplementaryDocuments?: string,
+  supplementaryDocumentCount = 0,
+  supplementaryDocumentNote?: string
 ): Promise<void> {
   const memoRunId = memoRun.id;
 
   await initializeAgentProgress(
     memoRunId,
     AGENT_ROSTER.map((agent) => agent.key),
-    deepResearch
+    deepResearch,
+    supplementaryDocumentCount,
+    supplementaryDocumentNote
   );
 
   try {
@@ -54,6 +64,7 @@ export async function executeAssessmentRun(
         indication: memoRun.indication,
         context: memoRun.context ?? undefined,
         deepResearch,
+        supplementaryDocuments,
       },
       {
         onAgentStatusChange: (agentName, status, info) =>
