@@ -172,7 +172,7 @@ export default async function MemoRunPage({
           </div>
         )}
 
-        <div className="w-full max-w-3xl">
+        <div className={cn("w-full", tocSections.length > 0 && "max-w-3xl")}>
           <RecordRecentRun
             run={{
               id: memoRun.id,
