@@ -24,6 +24,15 @@
 # again for EPO_OPS_CLIENT_ID/EPO_OPS_CLIENT_SECRET (Patent Agent's OAuth2
 # client-credentials pair) — without them the Patent Agent fails every run,
 # not a partial failure either.
+#
+# Google OAuth (whole-app gate, see proxy.ts): GOOGLE_CLIENT_ID/
+# GOOGLE_CLIENT_SECRET (from Google Cloud Console), NEXTAUTH_SECRET (a
+# random value signing session JWTs — without it every session is
+# rejected), and ALLOWED_EMAILS (the actual access-control list; a valid
+# Google login alone isn't enough, the email must be on this list too) are
+# all genuinely sensitive secrets. NEXTAUTH_URL is not sensitive (it's just
+# this app's own public URL, needed so next-auth builds correct OAuth
+# callback/redirect URLs) — a plain repo Variable, not a secret.
 name: deploy
 on:
   push:
@@ -59,7 +68,11 @@ jobs:
               anthropic-api-key="${{ secrets.ANTHROPIC_API_KEY }}" \
               mcp-bearer-token="${{ secrets.MCP_BEARER_TOKEN }}" \
               epo-ops-client-id="${{ secrets.EPO_OPS_CLIENT_ID }}" \
-              epo-ops-client-secret="${{ secrets.EPO_OPS_CLIENT_SECRET }}"
+              epo-ops-client-secret="${{ secrets.EPO_OPS_CLIENT_SECRET }}" \
+              google-client-id="${{ secrets.GOOGLE_CLIENT_ID }}" \
+              google-client-secret="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
+              nextauth-secret="${{ secrets.NEXTAUTH_SECRET }}" \
+              allowed-emails="${{ secrets.ALLOWED_EMAILS }}"
 
       - name: Deploy to Container App
         run: |
@@ -71,4 +84,9 @@ jobs:
               ANTHROPIC_API_KEY=secretref:anthropic-api-key \
               MCP_BEARER_TOKEN=secretref:mcp-bearer-token \
               EPO_OPS_CLIENT_ID=secretref:epo-ops-client-id \
-              EPO_OPS_CLIENT_SECRET=secretref:epo-ops-client-secret
+              EPO_OPS_CLIENT_SECRET=secretref:epo-ops-client-secret \
+              GOOGLE_CLIENT_ID=secretref:google-client-id \
+              GOOGLE_CLIENT_SECRET=secretref:google-client-secret \
+              NEXTAUTH_SECRET=secretref:nextauth-secret \
+              ALLOWED_EMAILS=secretref:allowed-emails \
+              NEXTAUTH_URL="${{ vars.NEXTAUTH_URL }}"

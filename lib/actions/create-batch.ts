@@ -7,6 +7,7 @@ import { batchProfileSchema } from "@/lib/validations/therapy-profile";
 import { executeAssessmentRun, type ExecutableMemoRun } from "@/lib/agents/run-executor";
 import { assessmentRunQueue } from "@/lib/agents/run-queue";
 import { checkRateLimit, getClientKey, RateLimitError } from "@/lib/rate-limit";
+import { requireSession, UnauthorizedError } from "@/lib/require-session";
 
 export type CreateBatchState = {
   error?: string;
@@ -32,8 +33,10 @@ export async function createBatchAssessments(
   formData: FormData
 ): Promise<CreateBatchState> {
   try {
+    await requireSession();
     checkRateLimit(await getClientKey(), CREATE_BATCH_LIMIT);
   } catch (err) {
+    if (err instanceof UnauthorizedError) return { error: err.message };
     if (err instanceof RateLimitError) return { error: err.message };
     throw err;
   }

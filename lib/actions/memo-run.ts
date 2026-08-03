@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { therapyProfileSchema } from "@/lib/validations/therapy-profile";
 import { checkRateLimit, getClientKey, RateLimitError } from "@/lib/rate-limit";
+import { requireSession, UnauthorizedError } from "@/lib/require-session";
 
 export type CreateMemoRunState = {
   errors?: Partial<Record<"target" | "modality" | "stage" | "indication" | "context", string[]>>;
@@ -23,8 +24,10 @@ export async function createMemoRun(
   formData: FormData
 ): Promise<CreateMemoRunState> {
   try {
+    await requireSession();
     checkRateLimit(await getClientKey(), CREATE_MEMO_RUN_LIMIT);
   } catch (err) {
+    if (err instanceof UnauthorizedError) return { message: err.message };
     if (err instanceof RateLimitError) return { message: err.message };
     throw err;
   }
