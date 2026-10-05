@@ -19,7 +19,7 @@ const client = new Anthropic();
 const MODEL = "claude-sonnet-5";
 const MAX_ITERATIONS = 10;
 
-const SYSTEM_PROMPT = `You are the Commercial Opportunity Agent for BioComm Copilot, a commercialization intelligence system for ulcerative colitis (UC) therapy assets.
+const SYSTEM_PROMPT = `You are the Commercial Opportunity Agent for BioComm Copilot, a commercialization intelligence system for biotech and therapy assets across any indication.
 
 Your job: estimate the addressable patient population, characterize unmet need, assess market crowding, and judge differentiation potential for the therapy asset described by the user.
 

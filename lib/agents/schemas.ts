@@ -261,7 +261,14 @@ export const priorApprovalSchema = z.object({
 
 export const endpointPrecedentSchema = z.object({
   endpoint: z.string(),
-  sourcedFromLabels: z.array(z.string()).min(2, "must cite at least 2 approved UC labels (Story 7)"),
+  // Story 7's original rule ("at least 2 approved UC labels") generalizes
+  // cleanly: any indication needs >=2 approved-product precedents before an
+  // endpoint counts as precedent rather than a single data point. Not
+  // UC-specific in enforcement — the agent supplies real label names for
+  // whatever indication it's researching (regulatory.ts's prompt allows an
+  // empty endpointPrecedent array instead when no real precedent exists,
+  // e.g. a novel indication with no approved products yet).
+  sourcedFromLabels: z.array(z.string()).min(2, "must cite at least 2 approved product labels as precedent"),
   citations: z.array(citationRefSchema).min(1),
 });
 
@@ -277,6 +284,134 @@ export const regulatoryOutputSchema = z.object({
 export type RegulatoryOutput = z.infer<typeof regulatoryOutputSchema>;
 
 // ---------------------------------------------------------------------------
+// Financial Valuation (rNPV) Agent — 9th agent, added to support platform
+// and early-stage assets (e.g. preclinical gene therapy) where a
+// risk-adjusted NPV is the standard valuation frame, not just a
+// High/Medium/Low commercial-opportunity tag. Informational tier, same
+// precedent as the Patent Agent (see synthesis.ts): does NOT feed the
+// Confidence Score formula — a dollar valuation is a categorically
+// different kind of claim than "how complete is this diligence pass," and
+// folding it in would silently change what past and future Confidence
+// Scores mean.
+//
+// Split deliberately into two parts, mirroring this codebase's existing
+// "boring and explainable" rule for the Decision Summary (computed in code,
+// never guessed by an LLM): the agent drafts and cites `assumptions` only
+// (phase probabilities, costs, pricing, timeline, discount rate) — the
+// `computed` cash-flow table, terminal value, and sensitivity scenarios are
+// produced afterward by a plain deterministic function (rnpv-calc.ts), not
+// by asking the model to do multi-year compounding arithmetic in a JSON
+// field. Compounding a discount rate across 8-12 years and a multi-gate
+// probability tree is exactly the class of arithmetic where LLMs quietly
+// drift; a spreadsheet-precision number here is worth more than a
+// plausible-sounding one.
+// ---------------------------------------------------------------------------
+
+export const phaseProbabilitySchema = z.object({
+  fromStage: z.string(), // e.g. "Preclinical/IND-enabling"
+  toStage: z.string(), // e.g. "IND clearance"
+  probability: z.number().min(0).max(1),
+  label: claimLabelSchema, // almost always Assumption/Inference — industry benchmarks, not a fact about this specific asset
+  rationale: z.string(),
+  citation: citationRefSchema.optional(),
+});
+
+export const developmentCostEstimateSchema = z.object({
+  // Must match a `stage` string in `timeline` below — rnpv-calc.ts matches
+  // cost to timeline by this field (case-insensitive), not by array index,
+  // so the agent is free to order these two arrays however research came
+  // together.
+  stage: z.string(),
+  lowUsd: z.number().nonnegative(),
+  highUsd: z.number().nonnegative(),
+  label: claimLabelSchema,
+  citation: citationRefSchema.optional(),
+});
+
+export const revenueAssumptionsSchema = z.object({
+  // A real number, not just a free-text estimate (contrast with Commercial
+  // Opportunity's patientPopulationEstimate) — the calc module multiplies
+  // this directly, so it needs something to multiply, not prose.
+  treatablePopulationCount: z.number().positive(),
+  treatablePopulationDescription: z.string(), // e.g. "severe obesity refractory to GLP-1 therapy, US"
+  treatablePopulationLabel: claimLabelSchema,
+  treatablePopulationCitation: citationRefSchema.optional(),
+  peakPenetrationRateLow: z.number().min(0).max(1),
+  peakPenetrationRateHigh: z.number().min(0).max(1),
+  pricePerPatientUsdLow: z.number().nonnegative(),
+  pricePerPatientUsdHigh: z.number().nonnegative(),
+  yearsToPeakSales: z.number().positive(),
+  label: claimLabelSchema,
+  citation: citationRefSchema.optional(),
+});
+
+export const timelineStageSchema = z.object({
+  stage: z.string(), // must match a developmentCosts[].stage entry to carry cost — see comment there
+  durationYears: z.number().positive(),
+  label: claimLabelSchema,
+  citation: citationRefSchema.optional(),
+});
+
+export const financialAssumptionsSchema = z.object({
+  phaseProbabilities: z.array(phaseProbabilitySchema).min(1),
+  developmentCosts: z.array(developmentCostEstimateSchema).min(1),
+  revenueAssumptions: revenueAssumptionsSchema,
+  timeline: z.array(timelineStageSchema).min(1),
+  discountRatePercent: z.number().min(0).max(100),
+  discountRateRationale: z.string(),
+  exclusivityYears: z.number().positive(),
+});
+export type FinancialAssumptions = z.infer<typeof financialAssumptionsSchema>;
+
+// What the LLM actually submits — assumptions plus a qualitative benchmark
+// note. Never `computed`: see the section comment above.
+export const rnpvSubmissionSchema = z.object({
+  assumptions: financialAssumptionsSchema,
+  benchmarkingNotes: z.object({
+    summary: z.string(),
+    label: claimLabelSchema,
+  }),
+});
+export type RnpvSubmission = z.infer<typeof rnpvSubmissionSchema>;
+
+export const yearlyCashFlowSchema = z.object({
+  year: z.number().int().positive(),
+  stage: z.string(),
+  grossCashFlowUsd: z.number(), // negative during development, positive once commercial
+  cumulativeProbability: z.number().min(0).max(1),
+  probabilityAdjustedCashFlowUsd: z.number(),
+  discountedPresentValueUsd: z.number(),
+});
+export type YearlyCashFlow = z.infer<typeof yearlyCashFlowSchema>;
+
+export const sensitivityScenarioSchema = z.object({
+  scenario: z.enum(["Conservative", "Base", "Aggressive"]),
+  keyAssumptionChanges: z.string(),
+  rnpvUsd: z.number(),
+});
+export type SensitivityScenario = z.infer<typeof sensitivityScenarioSchema>;
+
+export const rnpvComputedSchema = z.object({
+  yearlyCashFlows: z.array(yearlyCashFlowSchema),
+  terminalValueUsd: z.number(),
+  totalRnpvUsd: z.number(),
+  overallProbabilityOfSuccess: z.number().min(0).max(1),
+  sensitivityScenarios: z.array(sensitivityScenarioSchema).length(3),
+});
+export type RnpvComputed = z.infer<typeof rnpvComputedSchema>;
+
+export const rnpvOutputSchema = z.object({
+  assumptions: financialAssumptionsSchema,
+  computed: rnpvComputedSchema,
+  benchmarkingNotes: z.object({
+    summary: z.string(),
+    label: claimLabelSchema,
+  }),
+  methodologyNote: z.string(),
+});
+export type RnpvOutput = z.infer<typeof rnpvOutputSchema>;
+
+// ---------------------------------------------------------------------------
 // Critic Agent — AGENT_PLAN.md §4.7
 // ---------------------------------------------------------------------------
 
@@ -288,6 +423,7 @@ export const criticFlagTypeSchema = z.enum([
   "StaleData",
   "OverconfidentRegulatory",
   "Contradiction",
+  "UnrealisticFinancialAssumption",
 ]);
 
 export const criticFlagSchema = z.object({
@@ -354,6 +490,7 @@ export const agentNameSchema = z.enum([
   "dealComparables",
   "regulatory",
   "patents",
+  "rnpv",
   "critic",
   "synthesis",
 ]);
@@ -367,5 +504,10 @@ export const researchOutputsSchema = z.object({
   dealComparables: dealComparablesOutputSchema.nullable(),
   regulatory: regulatoryOutputSchema.nullable(),
   patents: patentOutputSchema.nullable(),
+  // rnpv runs after the 6 concurrent research agents settle (it draws on
+  // commercial/regulatory/dealComparables/patents for grounding) and before
+  // Critic, so Critic and Synthesis both see it as part of this same
+  // container — see orchestrator.ts.
+  rnpv: rnpvOutputSchema.nullable(),
 });
 export type ResearchOutputs = z.infer<typeof researchOutputsSchema>;

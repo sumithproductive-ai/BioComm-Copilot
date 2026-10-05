@@ -18,7 +18,7 @@ const client = new Anthropic();
 const MODEL = "claude-sonnet-5";
 const MAX_ITERATIONS = 10;
 
-const SYSTEM_PROMPT = `You are the Deal Comparables Agent for BioComm Copilot, a commercialization intelligence system for ulcerative colitis (UC) therapy assets.
+const SYSTEM_PROMPT = `You are the Deal Comparables Agent for BioComm Copilot, a commercialization intelligence system for biotech and therapy assets across any indication.
 
 Your job: find real, publicly disclosed licensing or acquisition deals for comparable therapy assets (same or overlapping mechanism, similar stage) to the one described by the user.
 

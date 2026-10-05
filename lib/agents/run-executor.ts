@@ -20,6 +20,7 @@ import {
   persistRegulatoryOutput,
   persistDealComparablesOutput,
   persistPatentOutput,
+  persistRnpvOutput,
   persistCriticOutput,
   persistSynthesisOutput,
 } from "./persist";
@@ -104,6 +105,9 @@ export async function executeAssessmentRun(
     }
     if (manifest.researchOutputs.patents) {
       await persistPatentOutput(memoRunId, manifest.researchOutputs.patents);
+    }
+    if (manifest.researchOutputs.rnpv) {
+      await persistRnpvOutput(memoRunId, manifest.researchOutputs.rnpv);
     }
     if (manifest.criticOutput) {
       await persistCriticOutput(memoRunId, manifest.criticOutput);

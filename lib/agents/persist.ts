@@ -4,16 +4,18 @@
 
 import type { Prisma, PrismaClient } from "@/lib/generated/prisma/client";
 import { db } from "@/lib/db";
-import type {
-  ClinicalResearchOutput,
-  CompetitiveIntelligenceOutput,
-  CommercialOpportunityOutput,
-  RegulatoryOutput,
-  DealComparablesOutput,
-  PatentOutput,
-  CriticOutput,
-  SynthesisOutput,
-  CitationRef,
+import {
+  rnpvOutputSchema,
+  type ClinicalResearchOutput,
+  type CompetitiveIntelligenceOutput,
+  type CommercialOpportunityOutput,
+  type RegulatoryOutput,
+  type DealComparablesOutput,
+  type PatentOutput,
+  type RnpvOutput,
+  type CriticOutput,
+  type SynthesisOutput,
+  type CitationRef,
 } from "./schemas";
 import type { AgentLiveStatus } from "./roster";
 import { deriveRunStatus, type RunStatus } from "@/lib/memo/run-status";
@@ -391,6 +393,30 @@ export async function getPatentLandscape(memoRunId: string): Promise<PatentLands
       patents: { include: { citation: true } },
     },
   });
+}
+
+// Financial Valuation (rNPV) Agent (9th agent, informational only — same
+// Confidence Score exclusion as Patents, see synthesis.ts). Stored as one
+// JSON blob on MemoRun (see schema.prisma's comment on rnpvOutput) rather
+// than normalized tables.
+export async function persistRnpvOutput(memoRunId: string, output: RnpvOutput): Promise<void> {
+  await db.memoRun.update({
+    where: { id: memoRunId },
+    data: { rnpvOutput: output as unknown as Prisma.InputJsonValue },
+  });
+}
+
+export async function getRnpvOutput(memoRunId: string): Promise<RnpvOutput | null> {
+  const row = await db.memoRun.findUnique({
+    where: { id: memoRunId },
+    select: { rnpvOutput: true },
+  });
+  if (!row?.rnpvOutput) return null;
+  // Re-validated on read, not just trusted from the DB — a schema change
+  // between when this was written and read should surface as null (and a
+  // hidden section) rather than a runtime crash on the memo page.
+  const parsed = rnpvOutputSchema.safeParse(row.rnpvOutput);
+  return parsed.success ? parsed.data : null;
 }
 
 export async function persistCriticOutput(memoRunId: string, output: CriticOutput): Promise<void> {
