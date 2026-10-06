@@ -391,12 +391,29 @@ export const sensitivityScenarioSchema = z.object({
 });
 export type SensitivityScenario = z.infer<typeof sensitivityScenarioSchema>;
 
+// Deterministic plausibility backstop (rnpv-calc.ts's checkPlausibility) —
+// a code-computed check on the LLM-drafted assumptions themselves, distinct
+// from Critic's UnrealisticFinancialAssumption check: Critic reasons in
+// prose and can miss a check it wasn't instructed to run; these are fixed,
+// reproducible range checks against stated industry norms (same "boring
+// and explainable, computed in code" principle synthesis.ts already uses
+// for the Confidence Score). The two are complementary, not redundant —
+// Critic can still flag soft, non-numeric problems (e.g. "ignores payer
+// risk") a hardcoded range can't express.
+export const plausibilityWarningSchema = z.object({
+  field: z.string(), // e.g. "peakPenetrationRateHigh", "discountRatePercent"
+  severity: z.enum(["Flag", "Note"]), // Flag = likely implausible; Note = worth confirming, not necessarily wrong
+  message: z.string(),
+});
+export type PlausibilityWarning = z.infer<typeof plausibilityWarningSchema>;
+
 export const rnpvComputedSchema = z.object({
   yearlyCashFlows: z.array(yearlyCashFlowSchema),
   terminalValueUsd: z.number(),
   totalRnpvUsd: z.number(),
   overallProbabilityOfSuccess: z.number().min(0).max(1),
   sensitivityScenarios: z.array(sensitivityScenarioSchema).length(3),
+  plausibilityWarnings: z.array(plausibilityWarningSchema),
 });
 export type RnpvComputed = z.infer<typeof rnpvComputedSchema>;
 

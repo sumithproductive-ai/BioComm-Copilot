@@ -31,6 +31,14 @@ const SCENARIO_STYLES: Record<string, string> = {
   Aggressive: "border-emerald-200 bg-emerald-50 text-emerald-700",
 };
 
+// Flag = likely implausible, rendered in red; Note = worth confirming but
+// not necessarily wrong, rendered in amber — same two-tier distinction
+// rnpv-calc.ts's checkPlausibility uses when it generates these.
+const WARNING_STYLES: Record<string, string> = {
+  Flag: "border-red-200 bg-red-50 text-red-800",
+  Note: "border-amber-200 bg-amber-50 text-amber-800",
+};
+
 export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
   const { assumptions, computed, benchmarkingNotes, methodologyNote } = data;
 
@@ -39,6 +47,23 @@ export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
       <div className="rounded-[9px] border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
         {methodologyNote}
       </div>
+
+      {computed.plausibilityWarnings.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+            Plausibility Checks (computed, not drafted)
+          </h3>
+          {computed.plausibilityWarnings.map((warning, i) => (
+            <div
+              key={i}
+              className={`rounded-[9px] border px-4 py-3 text-sm ${WARNING_STYLES[warning.severity] ?? WARNING_STYLES.Note}`}
+            >
+              <span className="font-semibold">{warning.severity === "Flag" ? "Flag" : "Note"}:</span>{" "}
+              {warning.message}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div>
         <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">

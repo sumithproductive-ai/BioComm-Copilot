@@ -15,7 +15,13 @@
 // level of confidence the underlying assumptions (wide low/high ranges,
 // preclinical-stage data) don't support.
 
-import type { FinancialAssumptions, RnpvComputed, SensitivityScenario, YearlyCashFlow } from "./schemas";
+import type {
+  FinancialAssumptions,
+  PlausibilityWarning,
+  RnpvComputed,
+  SensitivityScenario,
+  YearlyCashFlow,
+} from "./schemas";
 
 type ScenarioConfig = {
   scenario: "Conservative" | "Base" | "Aggressive";
@@ -200,7 +206,78 @@ function runModel(
   };
 }
 
-export function computeRnpv(assumptions: FinancialAssumptions): RnpvComputed {
+// Stages where the asset has not yet reached market — used to gate the
+// discount-rate and overall-probability checks below, since "too low a
+// discount rate" and "too high a probability of success" are only
+// implausible *before* approval; an Approved asset legitimately clears
+// both. Matches STAGE_OPTIONS in lib/validations/therapy-profile.ts minus
+// "Approved".
+const UNAPPROVED_STAGES = ["Preclinical", "Phase 1", "Phase 2", "Phase 3"];
+
+// Deterministic plausibility backstop — see schemas.ts's comment on
+// plausibilityWarningSchema for why this exists alongside (not instead of)
+// Critic's own UnrealisticFinancialAssumption check. Thresholds come
+// directly from the rNPV Agent's own system prompt guidance (rnpv.ts) and
+// standard industry rules of thumb: this just makes a few of those rules
+// unconditionally enforced in code rather than guidance the model can
+// drift from under its own reasoning.
+function checkPlausibility(
+  assumptions: FinancialAssumptions,
+  overallProbabilityOfSuccess: number,
+  stage: string
+): PlausibilityWarning[] {
+  const warnings: PlausibilityWarning[] = [];
+  const { revenueAssumptions, discountRatePercent, exclusivityYears } = assumptions;
+  const isUnapproved = UNAPPROVED_STAGES.includes(stage);
+
+  if (revenueAssumptions.peakPenetrationRateHigh > 0.1) {
+    warnings.push({
+      field: "peakPenetrationRateHigh",
+      severity: "Flag",
+      message: `Peak penetration high end of ${(revenueAssumptions.peakPenetrationRateHigh * 100).toFixed(1)}% is well above the ~1-5% typical for a first-in-class asset — treat as an outlier case, not the base case, unless explicitly justified.`,
+    });
+  }
+
+  if (isUnapproved && discountRatePercent < 10) {
+    warnings.push({
+      field: "discountRatePercent",
+      severity: "Flag",
+      message: `A ${discountRatePercent}% discount rate is unusually low for a ${stage} asset — industry practice applies 15-25% to clinical-stage biotech; a rate this low understates risk.`,
+    });
+  } else if (discountRatePercent > 35) {
+    warnings.push({
+      field: "discountRatePercent",
+      severity: "Note",
+      message: `A ${discountRatePercent}% discount rate is unusually high and may be effectively zeroing out long-dated cash flows — confirm this wasn't a data-entry error.`,
+    });
+  }
+
+  if (isUnapproved && overallProbabilityOfSuccess > 0.5) {
+    warnings.push({
+      field: "overallProbabilityOfSuccess",
+      severity: "Flag",
+      message: `An overall probability of success of ${(overallProbabilityOfSuccess * 100).toFixed(1)}% is far above the ~5-15% typical composite preclinical/early-clinical-to-approval odds for biotech — the underlying phase probabilities are likely too optimistic.`,
+    });
+  }
+
+  if (exclusivityYears > 20) {
+    warnings.push({
+      field: "exclusivityYears",
+      severity: "Note",
+      message: `${exclusivityYears} years of commercial exclusivity exceeds a typical patent term (20 years from filing, commonly ~8-12 years of actual post-approval runway) — confirm this accounts for time already elapsed and any patent term extensions, not the full statutory term.`,
+    });
+  } else if (exclusivityYears < 3) {
+    warnings.push({
+      field: "exclusivityYears",
+      severity: "Note",
+      message: `${exclusivityYears} years of exclusivity is unusually short — confirm this wasn't a data-entry error.`,
+    });
+  }
+
+  return warnings;
+}
+
+export function computeRnpv(assumptions: FinancialAssumptions, stage: string): RnpvComputed {
   const baseConfig = SCENARIOS.find((s) => s.scenario === "Base");
   if (!baseConfig) throw new Error("rnpv-calc: Base scenario config missing");
   const baseResult = runModel(assumptions, baseConfig);
@@ -214,11 +291,14 @@ export function computeRnpv(assumptions: FinancialAssumptions): RnpvComputed {
     };
   });
 
+  const plausibilityWarnings = checkPlausibility(assumptions, baseResult.overallProbabilityOfSuccess, stage);
+
   return {
     yearlyCashFlows: baseResult.yearlyCashFlows,
     terminalValueUsd: baseResult.terminalValueUsd,
     totalRnpvUsd: baseResult.totalRnpvUsd,
     overallProbabilityOfSuccess: baseResult.overallProbabilityOfSuccess,
     sensitivityScenarios,
+    plausibilityWarnings,
   };
 }

@@ -467,6 +467,18 @@ export function AssessmentReportDocument({
           <>
             <SectionTitle>Financial Valuation (rNPV)</SectionTitle>
             <Text style={[styles.muted, { marginBottom: 6 }]}>{rnpv.methodologyNote}</Text>
+            {rnpv.computed.plausibilityWarnings.map((warning, i) => (
+              <View
+                key={i}
+                style={[styles.card, { marginBottom: 4, borderColor: warning.severity === "Flag" ? "#dc2626" : COLORS.assumption }]}
+                wrap={false}
+              >
+                <Text style={[styles.body, { color: warning.severity === "Flag" ? "#dc2626" : COLORS.assumption, fontWeight: 700 }]}>
+                  {warning.severity}
+                </Text>
+                <Text style={styles.body}>{warning.message}</Text>
+              </View>
+            ))}
             <View style={styles.statGrid}>
               {rnpv.computed.sensitivityScenarios.map((scenario) => (
                 <View key={scenario.scenario} style={[styles.statTile, { width: "31%" }]}>

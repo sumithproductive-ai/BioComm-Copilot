@@ -215,7 +215,7 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
         ];
         const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
         if (unverified.length === 0) {
-          const computed = computeRnpv(parsed.data.assumptions);
+          const computed = computeRnpv(parsed.data.assumptions, input.stage);
           return rnpvOutputSchema.parse({
             assumptions: parsed.data.assumptions,
             computed,
