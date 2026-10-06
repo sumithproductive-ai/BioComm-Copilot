@@ -597,6 +597,20 @@ export async function getSourceIndex(memoRunId: string) {
   });
 }
 
+// Langfuse session id — written as soon as runOrchestrator's onSessionStart
+// callback fires (before any agent dispatches), not at the end with
+// everything else, specifically so a run that fails outright still leaves
+// a trace link behind. The URL itself is reconstructed at render time from
+// this id (see observability.ts's getTraceUrlForSession) rather than
+// stored, so it resolves correctly regardless of which environment's
+// LANGFUSE_BASEURL is rendering the memo later.
+export async function persistLangfuseSession(memoRunId: string, sessionId: string): Promise<void> {
+  await db.memoRun.update({
+    where: { id: memoRunId },
+    data: { langfuseSessionId: sessionId },
+  });
+}
+
 // Live per-agent progress (USER_STORIES.md Story 2). Not agent output —
 // just a status row updated as runOrchestrator's onAgentStatusChange
 // callback fires. AGENT_ROSTER (lib/agents/roster.ts) is the canonical

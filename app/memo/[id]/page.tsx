@@ -15,6 +15,7 @@ import {
   getSourceIndex,
   getAgentProgress,
 } from "@/lib/agents/persist";
+import { getTraceUrlForSession } from "@/lib/agents/observability";
 import { computeEpistemicLedger } from "@/lib/memo/epistemic-ledger";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
@@ -82,6 +83,14 @@ export default async function MemoRunPage({
     getSourceIndex(id),
     getAgentProgress(id),
   ]);
+
+  // Persisted as soon as the run starts (run-executor.ts's onSessionStart),
+  // not just once it finishes — so this resolves even for a failed or
+  // still-in-progress run, which is exactly when seeing the raw agent
+  // trace is most useful. Internal-use only: whoever clicks this still
+  // needs their own Langfuse project login, same as any other Langfuse
+  // dashboard link — this isn't a public/shareable view.
+  const traceUrl = getTraceUrlForSession(memoRun.langfuseSessionId);
 
   const hasClinicalResearch =
     !!clinicalLandscape &&
@@ -223,6 +232,17 @@ export default async function MemoRunPage({
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              {traceUrl && (
+                <a
+                  href={traceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-[9px] border border-border bg-white px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-slate-50"
+                  title="Full agent-by-agent research trace in Langfuse — requires your own Langfuse login"
+                >
+                  Research Trace ↗
+                </a>
+              )}
               {hasDecisionSummary && (
                 <a
                   href={`/memo/${memoRun.id}/pdf`}

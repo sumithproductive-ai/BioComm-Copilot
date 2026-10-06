@@ -82,6 +82,15 @@ export type OrchestratorOptions = {
     status: AgentLiveStatus,
     info: { attempt: number; note?: string }
   ) => void | Promise<void>;
+  // Fired once, immediately after the Langfuse trace is created — before
+  // any agent dispatches — so the caller can persist the session id right
+  // away. Deliberately as early as possible: the main reason to want this
+  // link is diagnosing a run that failed outright (e.g. an invalid API
+  // key failing every agent), which is exactly when persisting it only at
+  // the end would lose it. Not called at all if Langfuse isn't configured
+  // — nothing to link to. Same "Orchestrator does no DB writes itself"
+  // boundary as onAgentStatusChange.
+  onSessionStart?: (sessionId: string) => void | Promise<void>;
 };
 
 export type AgentStatus = "complete" | "incomplete" | "failed";
@@ -143,7 +152,7 @@ export async function runOrchestrator(
   input: OrchestratorInput,
   options: OrchestratorOptions = {}
 ): Promise<RunManifest> {
-  const { onAgentStatusChange } = options;
+  const { onAgentStatusChange, onSessionStart } = options;
   if (!input.target || !input.modality || !input.stage || !input.indication) {
     throw new Error("target, modality, stage, and indication are all required");
   }
@@ -158,6 +167,8 @@ export async function runOrchestrator(
   const runTrace = langfuseEnabled
     ? langfuse.trace({ id: sessionId, name: "memo-run", input })
     : null;
+
+  if (langfuseEnabled) await onSessionStart?.(sessionId);
 
   const clinicalInput: ClinicalResearchInput = {
     target: input.target,
