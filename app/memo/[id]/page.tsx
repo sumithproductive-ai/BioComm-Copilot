@@ -8,6 +8,7 @@ import {
   getRegulatoryLandscape,
   getDealComparablesLandscape,
   getPatentLandscape,
+  getRnpvOutput,
   getReviewerNotes,
   getDecisionSummary,
   getKeyRisksAndRecommendations,
@@ -25,6 +26,7 @@ import { CommercialOpportunitySection } from "@/components/commercial-opportunit
 import { RegulatoryLandscapeSection } from "@/components/regulatory-landscape";
 import { DealComparablesSection } from "@/components/deal-comparables";
 import { PatentLandscapeSection } from "@/components/patent-landscape";
+import { FinancialValuationSection } from "@/components/financial-valuation";
 import { ReviewerNotesSection } from "@/components/reviewer-notes";
 import { DecisionSummarySection } from "@/components/decision-summary";
 import { KeyRisksSection, RouteRecommendationsSection } from "@/components/key-risks";
@@ -60,6 +62,7 @@ export default async function MemoRunPage({
     regulatoryLandscape,
     dealComparablesLandscape,
     patentLandscape,
+    rnpvOutput,
     reviewerNotes,
     decisionSummary,
     keyRisksAndRecommendations,
@@ -72,6 +75,7 @@ export default async function MemoRunPage({
     getRegulatoryLandscape(id),
     getDealComparablesLandscape(id),
     getPatentLandscape(id),
+    getRnpvOutput(id),
     getReviewerNotes(id),
     getDecisionSummary(id),
     getKeyRisksAndRecommendations(id),
@@ -105,6 +109,7 @@ export default async function MemoRunPage({
   const hasPatents =
     !!patentLandscape &&
     (!!patentLandscape.patentLandscapeSummary || patentLandscape.patents.length > 0);
+  const hasRnpv = !!rnpvOutput;
   // Exactly one of these is set once Critic has actually run (empty-flags
   // runs get the standard-line summary; non-empty runs get flags instead —
   // see persistCriticOutput) — reliably distinguishes "Critic hasn't run
@@ -122,7 +127,8 @@ export default async function MemoRunPage({
     hasCommercialOpportunity ||
     hasRegulatory ||
     hasDealComparables ||
-    hasPatents;
+    hasPatents ||
+    hasRnpv;
   // Data only persists once the whole Orchestrator run resolves (Story 2 is
   // live *status*, not streamed partial content) — so during a run
   // hasAnyResults stays false the whole time. hasStartedRun is what
@@ -152,6 +158,7 @@ export default async function MemoRunPage({
     hasDealComparables && { id: "deal-comparables", label: "Deal Comparables" },
     hasRegulatory && { id: "regulatory-pathway", label: "Regulatory Pathway" },
     hasPatents && { id: "patent-landscape", label: "Patent Landscape" },
+    hasRnpv && { id: "financial-valuation", label: "Financial Valuation" },
     hasKeyRisks && { id: "key-risks", label: "Key Risks" },
     hasRouteRecommendations && { id: "route-recommendations", label: "Route Recommendations" },
     hasReviewerNotes && { id: "reviewer-notes", label: "Reviewer Notes" },
@@ -253,8 +260,8 @@ export default async function MemoRunPage({
                     {!hasStartedRun && (
                       <p className="text-sm text-muted-foreground">
                         6 research agents run concurrently against live ClinicalTrials.gov, PubMed, SEC
-                        EDGAR, EPO patent data, and web search, then Critic review, then Synthesis — not a
-                        demo.
+                        EDGAR, EPO patent data, and web search, then a Financial Valuation agent, then
+                        Critic review, then Synthesis — not a demo.
                       </p>
                     )}
                     <AgentProgressSection memoRunId={memoRun.id} initialData={agentProgress} />
@@ -313,6 +320,12 @@ export default async function MemoRunPage({
           {hasPatents && patentLandscape && (
             <CollapsibleSectionCard id="patent-landscape" title="Patent Landscape">
               <PatentLandscapeSection data={patentLandscape} />
+            </CollapsibleSectionCard>
+          )}
+
+          {hasRnpv && rnpvOutput && (
+            <CollapsibleSectionCard id="financial-valuation" title="Financial Valuation">
+              <FinancialValuationSection data={rnpvOutput} />
             </CollapsibleSectionCard>
           )}
 

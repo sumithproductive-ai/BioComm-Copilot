@@ -5,7 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { LangfuseSpanClient } from "langfuse";
 import { regulatoryOutputSchema, type RegulatoryOutput } from "./schemas";
-import { UC_COMPETITOR_REFERENCE_LIST } from "@/lib/config/uc-competitors";
+import { UC_COMPETITOR_REFERENCE_LIST, isUcRelatedIndication } from "@/lib/config/uc-competitors";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
@@ -19,18 +19,24 @@ const REFERENCE_LIST_TEXT = UC_COMPETITOR_REFERENCE_LIST.map(
   (c) => `- ${c.drug} (${c.brandName}), ${c.company}, ${c.mechanism}, approved ~${c.approvedYear}`
 ).join("\n");
 
-const SYSTEM_PROMPT = `You are the Regulatory Agent for BioComm Copilot, a commercialization intelligence system for ulcerative colitis (UC) therapy assets.
+// The UC drug reference list is only relevant context when the indication
+// actually is UC — for any other indication it's noise that could bias the
+// model toward citing the wrong disease's precedent, so it's omitted
+// entirely rather than offered as an irrelevant "starting point".
+function buildSystemPrompt(indication: string): string {
+  const referenceBlock = isUcRelatedIndication(indication)
+    ? `\n\nHere is a reference list of currently FDA-approved UC therapies you can draw on for endpointPrecedent and priorApprovalsSameMechanism — use it as a starting point, but confirm each specific fact (approval date, endpoint used) with a real citation before including it:\n${REFERENCE_LIST_TEXT}`
+    : "";
 
-Your job: find relevant FDA guidance documents, identify approved UC trial endpoints with precedent across multiple approved labels, find prior approvals in the same mechanism class, and produce a development timeline estimate, for the therapy asset described by the user.
+  return `You are the Regulatory Agent for BioComm Copilot, a commercialization intelligence system for biotech and therapy assets across any indication.
 
-Sources: web search for FDA.gov guidance documents, approval letters, and prior UC drug labels (accessdata.fda.gov).
+Your job: find relevant FDA guidance documents, identify approved trial endpoints with precedent across multiple approved labels in this asset's indication, find prior approvals in the same mechanism class, and produce a development timeline estimate, for the therapy asset described by the user.
 
-Here is a reference list of currently FDA-approved UC therapies you can draw on for endpointPrecedent and priorApprovalsSameMechanism — use it as a starting point, but confirm each specific fact (approval date, endpoint used) with a real citation before including it:
-${REFERENCE_LIST_TEXT}
+Sources: web search for FDA.gov guidance documents, approval letters, and prior drug labels for this indication (accessdata.fda.gov).${referenceBlock}
 
 Hard rules:
 - developmentTimelineEstimate.label MUST ALWAYS be "Assumption", never "Fact" — regulatory timelines are inherently uncertain and stating one as fact is a banned "false certainty" claim. The schema enforces this as a literal, but make sure your summary text also reads as an estimate, not a promise.
-- endpointPrecedent entries need sourcedFromLabels with AT LEAST 2 approved UC drug names (from the reference list or otherwise) — a single-label endpoint isn't precedent, it's a data point. Only include an endpoint here once you've confirmed at least 2 labels actually used it.
+- endpointPrecedent entries need sourcedFromLabels with AT LEAST 2 approved drug names in this indication (from the reference list above if one was given, or otherwise from your own research) — a single-label endpoint isn't precedent, it's a data point. Only include an endpoint here once you've confirmed at least 2 labels actually used it. If the asset's stage is early enough (e.g. no approved products yet exist in a narrowly-defined novel indication) that no real 2-label precedent exists, it is correct to return an empty endpointPrecedent array rather than force a precedent from an unrelated indication — do not pad this list with weak analogues just to satisfy the count.
 - priorApprovalsSameMechanism should only include drugs whose mechanism genuinely overlaps with the therapy asset's stated modality — do not pad this list with unrelated mechanisms.
 - Never invent an approval date, guidance document URL, or endpoint detail. Every guidanceDocuments, priorApprovalsSameMechanism, and endpointPrecedent entry needs a real citation or a real, verifiable URL from web_search.
 - submit_findings requires every field present, including empty arrays where you found nothing (e.g. guidanceDocuments: [] if there truly are none) — never omit a field.
@@ -45,6 +51,7 @@ Example of a correctly-shaped submit_findings call (abbreviated):
 }
 
 Call submit_findings exactly once, after using web_search to gather real data. Do not call it before doing at least one real search.`;
+}
 
 const submitFindingsTool: Anthropic.Tool = {
   name: "submit_findings",
@@ -99,6 +106,7 @@ export async function runRegulatoryAgent(
   parentSpan?: LangfuseSpanClient
 ): Promise<RegulatoryOutput> {
   const today = new Date().toISOString().slice(0, 10);
+  const systemPrompt = buildSystemPrompt(input.indication);
 
   // Same reasoning as Deal Comparables — no structured tool fallback here,
   // every citation is only as trustworthy as web_search itself.
@@ -139,7 +147,7 @@ Today's date is ${today}. Use web_search to gather real data before calling subm
       // ones that look complex up front — 4096 has confirmed to truncate
       // mid-"thinking" on other agents.
       max_tokens: 8192,
-      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
       tools: isLastChance ? [submitFindingsTool] : [webSearchTool, submitFindingsTool],
       tool_choice: isLastChance ? { type: "tool", name: "submit_findings" } : { type: "auto" },
       messages,

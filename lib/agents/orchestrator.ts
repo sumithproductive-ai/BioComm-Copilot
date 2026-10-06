@@ -1,11 +1,16 @@
 // Orchestrator — AGENT_PLAN.md §4.1. Top-level coordinator; never touches
 // sources directly. All 5 original research agents, the post-launch Patent
-// Agent, Critic, and Synthesis are now built — this is the full 8-agent
-// pipeline. Critic runs after the 6 research agents settle; Synthesis runs
-// last of all, after Critic, since it compiles Critic's flags into Key
-// Risks too. Patent findings are informational only (see synthesis.ts) —
-// they flow through Critic/Synthesis's full-ResearchOutputs input like
-// every other agent, just don't factor into the Confidence Score.
+// Agent, the Financial Valuation (rNPV) Agent, Critic, and Synthesis are now
+// built — this is the full 9-agent pipeline. The 6 research agents
+// (clinical/competitive/commercial/regulatory/dealComparables/patents) run
+// concurrently; rNPV runs after they settle, since it grounds its
+// assumptions in commercial/regulatory/dealComparables/patents' findings;
+// Critic runs after rNPV, reviewing all 7 research outputs together;
+// Synthesis runs last of all, after Critic, since it compiles Critic's
+// flags into Key Risks too. Patent and rNPV findings are informational
+// only (see synthesis.ts) — they flow through Critic/Synthesis's
+// full-ResearchOutputs input like every other agent, just don't factor into
+// the Confidence Score.
 
 import { randomUUID } from "node:crypto";
 import type { LangfuseSpanClient } from "langfuse";
@@ -21,6 +26,7 @@ import {
 import { runRegulatoryAgent, type RegulatoryInput } from "./regulatory";
 import { runDealComparablesAgent, type DealComparablesInput } from "./deal-comparables";
 import { runPatentsAgent, type PatentsInput } from "./patents";
+import { runRnpvAgent, type RnpvInput } from "./rnpv";
 import { runCriticAgent, type CriticInput } from "./critic";
 import { runSynthesisAgent, type SynthesisInput } from "./synthesis";
 import type {
@@ -62,6 +68,7 @@ const SECTION_TO_AGENT_KEY: Partial<Record<string, keyof ResearchOutputs>> = {
   Regulatory: "regulatory",
   "Deal Comparables": "dealComparables",
   "Patent Landscape": "patents",
+  "Financial Valuation": "rnpv",
 };
 
 // Story 2 — reports live status transitions as they happen, separate from
@@ -95,16 +102,6 @@ export type RunManifest = {
 };
 
 const MAX_RETRIES_PER_AGENT = 2;
-
-// Known-simple heuristic, not a real classifier — matches PRD.md non-goal
-// #1 ("UC only in v1") well enough to catch an obviously wrong indication
-// (e.g. "Crohn's disease") without the cost/latency of an LLM call just for
-// this check. False positives are possible (e.g. "collagenous colitis"
-// would incorrectly pass) — acceptable for a PoC guardrail, not for a
-// production compliance gate.
-function looksUcRelated(indication: string): boolean {
-  return /colitis/i.test(indication) || /\buc\b/i.test(indication);
-}
 
 // Runs one agent with up to maxRetries retries — AGENT_PLAN.md §3's 2-retry
 // policy. Each attempt is its own Langfuse span (Story 14 AC: "Orchestrator
@@ -149,11 +146,6 @@ export async function runOrchestrator(
   const { onAgentStatusChange } = options;
   if (!input.target || !input.modality || !input.stage || !input.indication) {
     throw new Error("target, modality, stage, and indication are all required");
-  }
-  if (!looksUcRelated(input.indication)) {
-    throw new Error(
-      `Indication "${input.indication}" doesn't look UC-related — this system only supports ulcerative colitis in v1 (PRD.md non-goal #1).`
-    );
   }
 
   const sessionId = randomUUID();
@@ -278,6 +270,7 @@ export async function runOrchestrator(
     dealComparables: "failed",
     regulatory: "failed",
     patents: "failed",
+    rnpv: "failed",
   } as Record<keyof ResearchOutputs, AgentStatus>;
 
   const agentNotes: Partial<Record<keyof ResearchOutputs, string>> = {};
@@ -289,6 +282,7 @@ export async function runOrchestrator(
     dealComparables: null,
     regulatory: null,
     patents: null,
+    rnpv: null,
   };
 
   if (clinicalResult.status === "fulfilled") {
@@ -339,10 +333,39 @@ export async function runOrchestrator(
     agentNotes.patents = `Unexpected rejection: ${String(patentsResult.reason)}`;
   }
 
-  // Critic runs after all 5 research agents settle, not concurrently with
-  // them — AGENT_PLAN.md §4.7: it reviews the completed outputs, it doesn't
-  // race them. Runs even if some research agents failed (null sections);
-  // runCriticAgent explicitly skips checks against null sections.
+  // rNPV runs after the 6 concurrent research agents settle, not alongside
+  // them — it grounds its assumptions in Commercial/Regulatory/Deal
+  // Comparables/Patents' findings rather than re-deriving them from
+  // scratch, so it needs those to already be in researchOutputs. Runs even
+  // if some of those failed (null sections) — runRnpvAgent treats a missing
+  // grounding section as "unavailable" context, not a hard failure.
+  const rnpvInput: RnpvInput = {
+    target: input.target,
+    modality: input.modality,
+    stage: input.stage,
+    indication: input.indication,
+    context: input.context,
+    commercial: researchOutputs.commercial,
+    regulatory: researchOutputs.regulatory,
+    dealComparables: researchOutputs.dealComparables,
+    patents: researchOutputs.patents,
+    supplementaryDocuments: input.supplementaryDocuments,
+  };
+  const rnpvRunResult = await runWithRetries(
+    runTrace,
+    "rnpv",
+    (span) => runRnpvAgent(rnpvInput, span),
+    onAgentStatusChange
+  );
+  agentStatuses.rnpv = rnpvRunResult.status;
+  researchOutputs.rnpv = rnpvRunResult.output;
+  if (rnpvRunResult.note) agentNotes.rnpv = rnpvRunResult.note;
+
+  // Critic runs after all 6 research agents and rNPV settle, not
+  // concurrently with them — AGENT_PLAN.md §4.7: it reviews the completed
+  // outputs, it doesn't race them. Runs even if some research agents failed
+  // (null sections); runCriticAgent explicitly skips checks against null
+  // sections.
   const criticInput: CriticInput = {
     target: input.target,
     modality: input.modality,
@@ -501,6 +524,30 @@ export async function runOrchestrator(
             agentStatuses.patents = result.status;
             researchOutputs.patents = result.output;
             agentNotes.patents = "Deep research: revised after reviewer feedback";
+          }
+        })
+      );
+    }
+
+    // Same "deliberately not chained" rule as every other deep-research
+    // pass above: rNPV's second pass, if flagged, re-grounds itself in
+    // whatever commercial/regulatory/dealComparables/patents looked like
+    // going into this block, not in any of those agents' own concurrent
+    // deep-research reruns above — chaining would risk the unbounded
+    // cascade this feature is deliberately bounded against.
+    const rnpvFeedback = flagsByAgent.get("rnpv");
+    if (rnpvFeedback) {
+      deepResearchTasks.push(
+        runWithRetries(
+          runTrace,
+          "rnpv",
+          (span) => runRnpvAgent({ ...rnpvInput, reviewerFeedback: rnpvFeedback }, span),
+          onAgentStatusChange
+        ).then((result) => {
+          if (result.status === "complete") {
+            agentStatuses.rnpv = result.status;
+            researchOutputs.rnpv = result.output;
+            agentNotes.rnpv = "Deep research: revised after reviewer feedback";
           }
         })
       );

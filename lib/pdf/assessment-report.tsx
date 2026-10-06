@@ -10,6 +10,7 @@ import type {
   DecisionSummaryRecord,
   KeyRisksAndRecommendations,
 } from "@/lib/agents/persist";
+import type { RnpvOutput } from "@/lib/agents/schemas";
 import { EPISTEMIC_LABELS, type EpistemicLedger } from "@/lib/memo/epistemic-ledger";
 
 // Audit-format PDF export — mirrors app/memo/[id]/page.tsx's section order
@@ -46,7 +47,17 @@ const FLAG_TYPE_LABELS: Record<string, string> = {
   StaleData: "Outdated data",
   OverconfidentRegulatory: "Overconfident regulatory claim",
   Contradiction: "Cross-section contradiction",
+  UnrealisticFinancialAssumption: "Unrealistic financial assumption",
 };
+
+function formatUsd(value: number): string {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1_000_000_000) return `${sign}$${(abs / 1_000_000_000).toFixed(2)}B`;
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(0)}K`;
+  return `${sign}$${abs.toFixed(0)}`;
+}
 
 const NEXT_STEP_LABELS: Record<string, string> = {
   ContinueDiligence: "Continue diligence",
@@ -128,6 +139,7 @@ export type AssessmentReportProps = {
   regulatory: RegulatoryLandscape | null;
   dealComparables: DealComparablesLandscape | null;
   patents: PatentLandscape | null;
+  rnpv: RnpvOutput | null;
   keyRisksAndRecommendations: KeyRisksAndRecommendations | null;
   reviewerNotes: ReviewerNotes | null;
   sourceIndex: { id: string; sourceUrl: string; sourceType: string; accessedDate: Date }[];
@@ -144,6 +156,7 @@ export function AssessmentReportDocument({
   regulatory,
   dealComparables,
   patents,
+  rnpv,
   keyRisksAndRecommendations,
   reviewerNotes,
   sourceIndex,
@@ -447,6 +460,58 @@ export function AssessmentReportDocument({
                 <CitationLine citation={patent.citation} />
               </View>
             ))}
+          </>
+        )}
+
+        {rnpv && (
+          <>
+            <SectionTitle>Financial Valuation (rNPV)</SectionTitle>
+            <Text style={[styles.muted, { marginBottom: 6 }]}>{rnpv.methodologyNote}</Text>
+            {rnpv.computed.plausibilityWarnings.map((warning, i) => (
+              <View
+                key={i}
+                style={[styles.card, { marginBottom: 4, borderColor: warning.severity === "Flag" ? "#dc2626" : COLORS.assumption }]}
+                wrap={false}
+              >
+                <Text style={[styles.body, { color: warning.severity === "Flag" ? "#dc2626" : COLORS.assumption, fontWeight: 700 }]}>
+                  {warning.severity}
+                </Text>
+                <Text style={styles.body}>{warning.message}</Text>
+              </View>
+            ))}
+            <View style={styles.statGrid}>
+              {rnpv.computed.sensitivityScenarios.map((scenario) => (
+                <View key={scenario.scenario} style={[styles.statTile, { width: "31%" }]}>
+                  <Text style={styles.statLabel}>{scenario.scenario}</Text>
+                  <Text style={styles.statValue}>{formatUsd(scenario.rnpvUsd)}</Text>
+                  <Text style={[styles.muted, { marginTop: 2 }]}>{scenario.keyAssumptionChanges}</Text>
+                </View>
+              ))}
+            </View>
+            <Text style={[styles.body, { marginTop: 6 }]}>
+              Overall probability of success: {(rnpv.computed.overallProbabilityOfSuccess * 100).toFixed(1)}% ·
+              Terminal value: {formatUsd(rnpv.computed.terminalValueUsd)}
+            </Text>
+            <Text style={[styles.subheading, { marginTop: 10 }]}>Phase probabilities</Text>
+            {rnpv.assumptions.phaseProbabilities.map((p, i) => (
+              <View key={i} style={styles.card} wrap={false}>
+                <View style={styles.row}>
+                  <Text style={[styles.body, { fontWeight: 700, color: COLORS.navy }]}>
+                    {p.fromStage} → {p.toStage}
+                  </Text>
+                  <Text style={[styles.body, { fontWeight: 700 }]}>{(p.probability * 100).toFixed(0)}%</Text>
+                </View>
+                <Text style={styles.muted}>{p.rationale}</Text>
+                <CitationLine citation={p.citation ?? null} />
+              </View>
+            ))}
+            <View style={{ marginTop: 4 }}>
+              <View style={styles.row}>
+                <Text style={styles.subheading}>Benchmarking</Text>
+                <ClaimTag label={rnpv.benchmarkingNotes.label} />
+              </View>
+              <Text style={styles.body}>{rnpv.benchmarkingNotes.summary}</Text>
+            </View>
           </>
         )}
 

@@ -18,7 +18,7 @@ const client = new Anthropic();
 const MODEL = "claude-sonnet-5";
 const MAX_ITERATIONS = 10;
 
-const SYSTEM_PROMPT = `You are the Patent Agent for BioComm Copilot, a commercialization intelligence system for ulcerative colitis (UC) therapy assets.
+const SYSTEM_PROMPT = `You are the Patent Agent for BioComm Copilot, a commercialization intelligence system for biotech and therapy assets across any indication.
 
 Your job: find patents relevant to the therapy asset described by the user — composition-of-matter, method-of-use, and formulation patents held by the asset's own developer, plus any blocking or closely competing patents held by others in the same or an overlapping mechanism class.
 

@@ -8,7 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { LangfuseSpanClient } from "langfuse";
 import { criticFlagSchema, criticOutputSchema, type CriticOutput, type ResearchOutputs } from "./schemas";
-import { UC_COMPETITOR_REFERENCE_LIST } from "@/lib/config/uc-competitors";
+import { UC_COMPETITOR_REFERENCE_LIST, isUcRelatedIndication } from "@/lib/config/uc-competitors";
 
 const client = new Anthropic();
 
@@ -73,41 +73,54 @@ function dropSelfContradictingFlags(
   });
 }
 
-const SYSTEM_PROMPT = `You are the Critic Agent for BioComm Copilot, a commercialization intelligence system for ulcerative colitis (UC) therapy assets.
+// Check 2 (MissingCompetitor) only applies when the indication is actually
+// UC — the reference list is a curated, versioned list specific to that one
+// disease (lib/config/uc-competitors.ts). For any other indication there is
+// no equivalent fixed list to diff against, so the check is skipped
+// entirely rather than asking the model to hallucinate an expected
+// competitor roster from training data — that would violate this agent's
+// own "reason only over the structured JSON you're given" rule.
+function buildSystemPrompt(indication: string): string {
+  const isUc = isUcRelatedIndication(indication);
+  const missingCompetitorCheck = isUc
+    ? `2. MissingCompetitor — diff the Competitive Intelligence output's approvedCompetitors against this hardcoded reference list. Flag every drug on the list below that does NOT appear (by drug or brand name) in approvedCompetitors.\nReference list:\n${REFERENCE_LIST_TEXT}`
+    : `2. MissingCompetitor — SKIP this check for this run. There is no fixed reference list for this indication, so do not fabricate a list of "expected" competitors from training-data recall to diff against — that would be inventing facts to fill a gap, which this agent must never do. Never emit a MissingCompetitor flag for this run.`;
 
-Your job: adversarially review the 6 research agent outputs you're given (Clinical Research, Competitive Intelligence, Commercial Opportunity, Regulatory, Deal Comparables, Patent Landscape) for a single therapy asset, and flag every problem you find. You do not have web search or any other tool — you reason only over the structured JSON you're given, plus the hardcoded UC competitor reference list below. Do not invent facts to fill gaps; your job is to flag gaps, not close them.
+  return `You are the Critic Agent for BioComm Copilot, a commercialization intelligence system for biotech and therapy assets across any indication.
 
-Run exactly these 7 checks. Every flag you produce must use one of these exact "type" values, matching the check that produced it:
+Your job: adversarially review the 7 research agent outputs you're given (Clinical Research, Competitive Intelligence, Commercial Opportunity, Regulatory, Deal Comparables, Patent Landscape, Financial Valuation) for a single therapy asset, and flag every problem you find. You do not have web search or any other tool — you reason only over the structured JSON you're given${isUc ? ", plus the hardcoded UC competitor reference list below" : ""}. Do not invent facts to fill gaps; your job is to flag gaps, not close them.
+
+Run exactly these 8 checks. Every flag you produce must use one of these exact "type" values, matching the check that produced it:
 
 1. UnsupportedClaim — any claim in the Clinical Research or Patent Landscape output that is missing a citation where the schema allows one (e.g. a safetySignal or similarDrugFailure with no citation, when a citation was reasonably available; the same applies to Patent Landscape's landscapeSummary reading more confident than its label suggests).
-2. MissingCompetitor — diff the Competitive Intelligence output's approvedCompetitors against this hardcoded reference list. Flag every drug on the list below that does NOT appear (by drug or brand name) in approvedCompetitors.
-Reference list:
-${REFERENCE_LIST_TEXT}
+${missingCompetitorCheck}
 3. AssumptionAsFact — scan every section for a claim whose label is "Fact" but whose surrounding text reads as uncertain, estimated, or hedged, or a claim with no label field at all where the schema requires one. Also flag a label that looks too weak for a well-cited claim (mislabeled confidence goes both directions).
 4. UndisclosedTerms — in Deal Comparables output, any comparableDeals entry whose disclosedTerms does not clearly state financial terms (or clearly state "not disclosed") but isn't already flagged as such by the Deal Comparables Agent itself.
 5. StaleData — any trial in the Clinical Research output whose statusAsOfDate is more than 12 months before today's date (given below) but isStale is false.
 6. OverconfidentRegulatory — any claim in the Regulatory output that states a regulatory outcome, timeline, or approval likelihood as settled fact rather than "Assumption" (developmentTimelineEstimate.label is enforced as "Assumption" by schema already — this check is about prose elsewhere in the Regulatory output that reads more confidently than its label suggests, and any other unlabeled regulatory claim treated as certain).
-7. Contradiction — cross-section contradictions, most notably Commercial Opportunity's marketCrowdingAssessment.consistentWithCompetitiveLandscape being false, but also any other place where two sections' claims about the same fact disagree.
+7. Contradiction — cross-section contradictions, most notably Commercial Opportunity's marketCrowdingAssessment.consistentWithCompetitiveLandscape being false, but also any other place where two sections' claims about the same fact disagree (including the Financial Valuation output's revenue assumptions contradicting Commercial Opportunity's patient population or differentiation findings).
+8. UnrealisticFinancialAssumption — in the Financial Valuation output's assumptions: peak penetration rates outside a realistic 1-5% range for a first-in-class asset without strong justification in the rationale; phase probabilities that ignore this modality's known manufacturing/regulatory/safety risk (e.g. assuming near-certain success for a novel, unproven mechanism); pricing assumptions that assume immediate full-price payer acceptance without addressing reimbursement risk; a discount rate that looks too low for the asset's actual stage (preclinical/no-IND assets typically warrant 15-25%, not single digits); or benchmarkingNotes that inflate a weak or nonexistent comparable deal into strong market validation. The Financial Valuation output's computed.plausibilityWarnings array (if non-empty) is a deterministic, code-computed check on the same assumptions, already confirmed true by arithmetic, not drafted by that agent — treat every entry there as a pre-confirmed finding and raise it as (or fold it into) your own flag rather than independently re-deriving it, and never contradict or soften it.
 
-For each flag, set "section" to the name of the research section it applies to (e.g. "Clinical Research", "Competitive Intelligence", "Commercial Opportunity", "Regulatory", "Deal Comparables", "Patent Landscape"), and "description" to a specific, concrete explanation — name the actual claim, drug, or field, not a generic restatement of the check.
+For each flag, set "section" to the name of the research section it applies to (e.g. "Clinical Research", "Competitive Intelligence", "Commercial Opportunity", "Regulatory", "Deal Comparables", "Patent Landscape", "Financial Valuation"), and "description" to a specific, concrete explanation — name the actual claim, drug, or field, not a generic restatement of the check.
 
 Hard rules:
 - Never filter or soften a flag that is genuinely correct — every real problem you confirm must appear in your output as its own array entry. This is a compliance-relevant check for a BD tool; false negatives on real problems are worse than over-flagging.
 - This does NOT mean including a flag you talked yourself out of. If, while checking something, you conclude there is actually no problem (e.g. you first thought a competitor was missing, then noticed it's present under a different name or citation), that is not a flag — do not add it to the array. A flag's description must never contain hedging or self-correction language like "actually fine," "no issue," "retracting," or "on second look" — if your description would need to say any of that, the correct action is to not emit that flag at all, not to emit it with a caveat. Every entry in the array must be a confirmed, real problem end to end.
-- Do not fabricate a problem that isn't there just to have output — if a section is null (that research agent failed or produced nothing), do not run checks against it and do not flag its absence as one of the 7 check types above (there is no flag type for "missing section").
+- Do not fabricate a problem that isn't there just to have output — if a section is null (that research agent failed or produced nothing), do not run checks against it and do not flag its absence as one of the 8 check types above (there is no flag type for "missing section").
 - Every flag must be traceable to something actually present in the JSON you were given — don't speculate about data you weren't given.
 
 Example of a correctly-shaped submit_findings call:
 {
   "flags": [
-    { "type": "MissingCompetitor", "section": "Competitive Intelligence", "description": "Ozanimod (Zeposia), Bristol Myers Squibb, is FDA-approved for UC since ~2021 but does not appear in approvedCompetitors." },
-    { "type": "StaleData", "section": "Clinical Research", "description": "Trial NCT01234567 has statusAsOfDate of 2024-11-01 (more than 12 months before today) but isStale is false." }
+    { "type": "StaleData", "section": "Clinical Research", "description": "Trial NCT01234567 has statusAsOfDate of 2024-11-01 (more than 12 months before today) but isStale is false." },
+    { "type": "UnrealisticFinancialAssumption", "section": "Financial Valuation", "description": "revenueAssumptions.peakPenetrationRateHigh is 0.35 (35%) for a first-in-class gene therapy with no completed human trials — well outside the typical 1-5% first-in-class range, with no rationale given for the outlier assumption." }
   ]
 }
 
 If you find nothing wrong, call submit_findings with an empty flags array — do not invent a flag to avoid returning empty.
 
 Call submit_findings exactly once.`;
+}
 
 const submitFindingsTool: Anthropic.Tool = {
   name: "submit_findings",
@@ -132,6 +145,7 @@ export async function runCriticAgent(
   parentSpan?: LangfuseSpanClient
 ): Promise<CriticOutput> {
   const today = new Date().toISOString().slice(0, 10);
+  const systemPrompt = buildSystemPrompt(input.indication);
 
   const messages: Anthropic.MessageParam[] = [
     {
@@ -149,7 +163,7 @@ Today's date: ${today}
 Research outputs (any section may be null if that agent failed to produce output — do not run checks against a null section):
 ${JSON.stringify(input.researchOutputs, null, 2)}
 
-Run all 7 checks from your system prompt and call submit_findings with every flag you find.`,
+Run all 8 checks from your system prompt and call submit_findings with every flag you find.`,
           cache_control: { type: "ephemeral" },
         },
       ],
@@ -169,7 +183,7 @@ Run all 7 checks from your system prompt and call submit_findings with every fla
       // input here is larger than any single research agent's (all 5
       // outputs at once), so there's no reason to go lower.
       max_tokens: 8192,
-      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
       tools: [submitFindingsTool],
       tool_choice: { type: "tool", name: "submit_findings" },
       messages,

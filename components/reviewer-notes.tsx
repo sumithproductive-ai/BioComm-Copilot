@@ -10,6 +10,7 @@ const FLAG_TYPE_LABELS: Record<string, string> = {
   StaleData: "Outdated data",
   OverconfidentRegulatory: "Overconfident regulatory claim",
   Contradiction: "Cross-section contradiction",
+  UnrealisticFinancialAssumption: "Unrealistic financial assumption",
 };
 
 // Story 9 AC: "Section is visually distinct (e.g. bordered callout) so it

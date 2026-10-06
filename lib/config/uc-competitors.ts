@@ -56,6 +56,18 @@ export function findMissingReferenceCompetitors(reportedDrugNames: string[]): Uc
   );
 }
 
+// Generalization gate (moved here from orchestrator.ts's looksUcRelated,
+// same heuristic) — every place in the codebase that force-applies this
+// reference list (Competitive Intelligence's "must include every drug"
+// rule, Critic's MissingCompetitor check, Synthesis's competitive coverage
+// sub-score) now checks this first, instead of assuming every run is UC.
+// Still a known-simple heuristic, not a real classifier — false positives
+// (e.g. "collagenous colitis") are an acceptable miss for a PoC-grade gate,
+// not a production compliance check.
+export function isUcRelatedIndication(indication: string): boolean {
+  return /colitis/i.test(indication) || /\buc\b/i.test(indication);
+}
+
 export const UC_COMPETITOR_REFERENCE_LIST: UcCompetitor[] = [
   {
     drug: "Vedolizumab",

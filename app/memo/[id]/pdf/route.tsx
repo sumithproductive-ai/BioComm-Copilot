@@ -8,6 +8,7 @@ import {
   getRegulatoryLandscape,
   getDealComparablesLandscape,
   getPatentLandscape,
+  getRnpvOutput,
   getReviewerNotes,
   getDecisionSummary,
   getKeyRisksAndRecommendations,
@@ -35,6 +36,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     regulatoryLandscape,
     dealComparablesLandscape,
     patentLandscape,
+    rnpvOutput,
     reviewerNotes,
     decisionSummary,
     keyRisksAndRecommendations,
@@ -46,6 +48,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     getRegulatoryLandscape(id),
     getDealComparablesLandscape(id),
     getPatentLandscape(id),
+    getRnpvOutput(id),
     getReviewerNotes(id),
     getDecisionSummary(id),
     getKeyRisksAndRecommendations(id),
@@ -71,6 +74,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       regulatory={regulatoryLandscape}
       dealComparables={dealComparablesLandscape}
       patents={patentLandscape}
+      rnpv={rnpvOutput}
       keyRisksAndRecommendations={keyRisksAndRecommendations}
       reviewerNotes={reviewerNotes}
       sourceIndex={sourceIndex}

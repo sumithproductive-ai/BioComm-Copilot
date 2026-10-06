@@ -17,7 +17,7 @@ const client = new Anthropic();
 const MODEL = "claude-sonnet-5";
 const MAX_ITERATIONS = 10;
 
-const SYSTEM_PROMPT = `You are the Clinical Research Agent for BioComm Copilot, a commercialization intelligence system for ulcerative colitis (UC) therapy assets.
+const SYSTEM_PROMPT = `You are the Clinical Research Agent for BioComm Copilot, a commercialization intelligence system for biotech and therapy assets across any indication.
 
 Your job: research active and completed trials, trial outcomes, mechanism of action, safety signals, and whether similar drugs have failed, for the therapy asset described by the user.
 

@@ -23,6 +23,7 @@ import {
 import {
   UC_COMPETITOR_REFERENCE_LIST,
   findMissingReferenceCompetitors,
+  isUcRelatedIndication,
 } from "@/lib/config/uc-competitors";
 
 const client = new Anthropic();
@@ -50,6 +51,12 @@ function clinicalDataCompleteness(clinical: ResearchOutputs["clinical"]): number
 // competitive_coverage_completeness = fraction of the hardcoded major-UC-
 // competitor reference list actually present in approvedCompetitors — the
 // same diff Critic's MissingCompetitor check runs, expressed as a score.
+// Only meaningful for UC (see isUcRelatedIndication) — that reference list
+// is specific to one disease, so scoring any other indication against it
+// would always read as near-zero regardless of how complete the research
+// actually was, corrupting a 20%-weighted Confidence Score component for
+// every non-UC run. genericCompetitiveCoverageCompleteness below is the
+// list-independent fallback used for every other indication.
 //
 // Uses the shared, substring-based findMissingReferenceCompetitors (not an
 // exact-match Set lookup) — confirmed live (comprehensive review,
@@ -58,12 +65,38 @@ function clinicalDataCompleteness(clinical: ResearchOutputs["clinical"]): number
 // fully-complete 12/11 competitor list as 0.000, corrupting the displayed
 // Confidence Score by ~2 points on a real run. Do not reintroduce a local
 // exact-match copy of this check here.
-function competitiveCoverageCompleteness(competitive: ResearchOutputs["competitive"]): number {
+function ucCompetitiveCoverageCompleteness(competitive: ResearchOutputs["competitive"]): number {
   if (!competitive) return 0;
   const reportedNames = competitive.approvedCompetitors.map((c) => c.drug);
   const missing = findMissingReferenceCompetitors(reportedNames);
   const matchedCount = UC_COMPETITOR_REFERENCE_LIST.length - missing.length;
   return matchedCount / UC_COMPETITOR_REFERENCE_LIST.length;
+}
+
+// For any indication without a fixed reference list: a "did this agent
+// produce substantive, cited competitive content" heuristic instead of a
+// coverage ratio against a list that doesn't apply. Fraction of two checks
+// true: at least one approved competitor reported, every one of them
+// citation-backed; and at least one positioning gap identified. (No
+// meaningful third check exists for lateStagePipeline — the schema always
+// populates that array, possibly empty, so its mere presence carries no
+// signal either way.)
+function genericCompetitiveCoverageCompleteness(competitive: ResearchOutputs["competitive"]): number {
+  if (!competitive) return 0;
+  const checks = [
+    competitive.approvedCompetitors.length > 0 && competitive.approvedCompetitors.every((c) => !!c.citation),
+    competitive.positioningGaps.length > 0,
+  ];
+  return checks.filter(Boolean).length / checks.length;
+}
+
+function competitiveCoverageCompleteness(
+  competitive: ResearchOutputs["competitive"],
+  indication: string
+): number {
+  return isUcRelatedIndication(indication)
+    ? ucCompetitiveCoverageCompleteness(competitive)
+    : genericCompetitiveCoverageCompleteness(competitive);
 }
 
 // commercial_source_quality = fraction of the three sourced/labeled
@@ -116,11 +149,10 @@ function recommendedNextStep(
   return "DoNotPursue";
 }
 
-// Not specified anywhere in AGENT_PLAN.md — a judgment call, same as the
-// Orchestrator's looksUcRelated heuristic. Reflects commercial promise
-// specifically (differentiation + a sourced patient population + no
-// unresolved crowding contradiction), not overall data quality — those are
-// deliberately different axes from confidenceScore.
+// Not specified anywhere in AGENT_PLAN.md — a judgment call. Reflects
+// commercial promise specifically (differentiation + a sourced patient
+// population + no unresolved crowding contradiction), not overall data
+// quality — those are deliberately different axes from confidenceScore.
 function commercialOpportunityRating(
   commercial: ResearchOutputs["commercial"]
 ): DecisionSummary["commercialOpportunity"] {
@@ -134,10 +166,11 @@ function commercialOpportunityRating(
 function computeDecisionSummary(
   researchOutputs: ResearchOutputs,
   critic: CriticOutput | null,
-  keyRisksCount: number
+  keyRisksCount: number,
+  indication: string
 ): DecisionSummary {
   const clinicalScore = clinicalDataCompleteness(researchOutputs.clinical);
-  const competitiveScore = competitiveCoverageCompleteness(researchOutputs.competitive);
+  const competitiveScore = competitiveCoverageCompleteness(researchOutputs.competitive, indication);
   const commercialScore = commercialSourceQuality(researchOutputs.commercial);
   const regulatoryScore = regulatoryPrecedentStrength(researchOutputs.regulatory);
   const criticScore = inverseCriticFlagSeverity(critic);
@@ -174,11 +207,11 @@ const synthesisSubmissionSchema = z.object({
   routeRecommendations: z.array(routeRecommendationSchema),
 });
 
-const SYSTEM_PROMPT = `You are the Synthesis Agent for BioComm Copilot, a commercialization intelligence system for ulcerative colitis (UC) therapy assets. You compile — you do not research. Every other agent has already run; you are given their complete outputs plus the Critic Agent's review flags.
+const SYSTEM_PROMPT = `You are the Synthesis Agent for BioComm Copilot, a commercialization intelligence system for biotech and therapy assets across any indication. You compile — you do not research. Every other agent has already run; you are given their complete outputs plus the Critic Agent's review flags.
 
 Your only two jobs:
 
-1. Key Risks — pull together the most material risks a BD analyst evaluating this asset needs to know, drawn ONLY from what's already in the data you were given: clinical safety signals, similar drug failures, market crowding issues, regulatory uncertainty, undisclosed deal terms, and Critic flags. Do not invent a risk that isn't traceable to something already present. For each risk:
+1. Key Risks — pull together the most material risks a BD analyst evaluating this asset needs to know, drawn ONLY from what's already in the data you were given: clinical safety signals, similar drug failures, market crowding issues, regulatory uncertainty, undisclosed deal terms, unrealistic or unbenchmarked financial-valuation assumptions, and Critic flags. Do not invent a risk that isn't traceable to something already present. For each risk:
    - "label" should match the confidence of the underlying finding it's drawn from (carry over its label if it has one; use "Inference" if you're synthesizing across multiple findings; use "Unknown" only if the risk itself is uncertain, not the underlying data).
    - "citation" should be copied from the source finding's citation if it has one — never fabricate a new citation. Omit citation if the underlying finding didn't have one (e.g. a risk drawn from a Critic flag, which has no citation of its own).
    - Prioritize risks a human reviewer would actually want flagged before making a diligence decision — 3 to 8 risks is typical; do not pad the list with restatements of the same risk.
@@ -305,7 +338,8 @@ Call submit_findings with your compiled Key Risks and Route Recommendations.`,
   const decisionSummary = computeDecisionSummary(
     input.researchOutputs,
     input.criticOutput,
-    submission.keyRisks.length
+    submission.keyRisks.length,
+    input.indication
   );
 
   return synthesisOutputSchema.parse({

@@ -13,6 +13,7 @@ import { secEdgarSearchToolDefinition, searchSecFilings } from "./tools/sec-edga
 import {
   UC_COMPETITOR_REFERENCE_LIST,
   findMissingReferenceCompetitors as findMissingReferenceCompetitorsByName,
+  isUcRelatedIndication,
 } from "@/lib/config/uc-competitors";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
@@ -27,15 +28,25 @@ const REFERENCE_LIST_TEXT = UC_COMPETITOR_REFERENCE_LIST.map(
   (c) => `- ${c.drug} (${c.brandName}), ${c.company}, ${c.mechanism}, approved ~${c.approvedYear}`
 ).join("\n");
 
-const SYSTEM_PROMPT = `You are the Competitive Intelligence Agent for BioComm Copilot, a commercialization intelligence system for ulcerative colitis (UC) therapy assets.
+// The "MUST include every drug on this list" hard requirement only makes
+// sense for UC — it's a curated, versioned reference list specific to that
+// one indication (lib/config/uc-competitors.ts). For any other indication
+// there is no equivalent fixed list, so the agent falls back to researching
+// competitors generically via its own tools, with no fixed-list check.
+function buildSystemPrompt(indication: string): string {
+  const isUc = isUcRelatedIndication(indication);
+  const competitorRule = isUc
+    ? `- Your approvedCompetitors list MUST include every drug in this reference list of currently FDA-approved UC therapies, unless you have direct, cited evidence one has been withdrawn from the market (state that explicitly in that case rather than silently omitting it):\n${REFERENCE_LIST_TEXT}`
+    : `- There is no fixed reference list for this indication. Research approved and late-stage competitors thoroughly via search_clinical_trials, search_sec_filings, and web_search — do not rely on training-data recall of "well-known" competitors without a real citation, and do not omit a major approved therapy just because it wasn't the first result.`;
 
-Your job: map approved therapies, late-stage pipeline, mechanism overlap, and positioning gaps in UC for the therapy asset described by the user.
+  return `You are the Competitive Intelligence Agent for BioComm Copilot, a commercialization intelligence system for biotech and therapy assets across any indication.
+
+Your job: map approved therapies, late-stage pipeline, mechanism overlap, and positioning gaps for the therapy asset's indication (given below) — you are not limited to any single disease area.
 
 Sources, in priority order: search ClinicalTrials.gov first for pipeline/approval status, then search_sec_filings for competitor 10-K/10-Q pipeline and risk-factor disclosures (a company's own SEC filing is stronger evidence of its pipeline stage than a news article about it), then web search for company websites, press releases, and FDA approval announcements to fill in anything the structured sources missed.
 
 Hard rules:
-- Your approvedCompetitors list MUST include every drug in this reference list of currently FDA-approved UC therapies, unless you have direct, cited evidence one has been withdrawn from the market (state that explicitly in that case rather than silently omitting it):
-${REFERENCE_LIST_TEXT}
+${competitorRule}
 - lateStagePipeline only includes Phase 2b or later assets in the same or an overlapping mechanism class as the therapy being assessed — do not include earlier-stage or unrelated-mechanism assets.
 - Never invent an approval date, company name, or trial detail. Every approvedCompetitors and lateStagePipeline entry needs a real citation from search_clinical_trials, search_sec_filings, or web_search.
 - positioningGaps entries must be labeled Fact, Assumption, Inference, or Unknown based on how directly sourced they are — a gap you're inferring from the competitive picture rather than reading directly from a source is Inference, not Fact.
@@ -50,6 +61,7 @@ Example of a correctly-shaped submit_findings call (abbreviated):
 }
 
 Call submit_findings exactly once, after using search_clinical_trials, search_sec_filings, and web_search to gather real data. Do not call it before doing at least one real search.`;
+}
 
 const submitFindingsTool: Anthropic.Tool = {
   name: "submit_findings",
@@ -111,7 +123,15 @@ function backfillEmptyArrayFields(input: unknown): unknown {
 // earlier exact-match version of this check lived here and duplicated (with
 // the same bug) in synthesis.ts's confidence-score calculation; see that
 // file's comment for the concrete evidence of what exact matching broke.
-function findMissingReferenceCompetitors(output: CompetitiveIntelligenceOutput): string[] {
+// Only meaningful for UC — there's no fixed reference list for any other
+// indication, so this always reports nothing missing outside UC rather than
+// diffing against a disease's drug list that has nothing to do with the
+// asset being assessed.
+function findMissingReferenceCompetitors(
+  output: CompetitiveIntelligenceOutput,
+  indication: string
+): string[] {
+  if (!isUcRelatedIndication(indication)) return [];
   const reportedNames = output.approvedCompetitors.map((c) => c.drug);
   return findMissingReferenceCompetitorsByName(reportedNames).map((ref) => ref.drug);
 }
@@ -121,6 +141,7 @@ export async function runCompetitiveIntelligenceAgent(
   parentSpan?: LangfuseSpanClient
 ): Promise<CompetitiveIntelligenceOutput> {
   const today = new Date().toISOString().slice(0, 10);
+  const systemPrompt = buildSystemPrompt(input.indication);
 
   // Provenance tracking for approvedCompetitors/lateStagePipeline citations
   // — same idea as Clinical Research's realNctIds, hostname-level since
@@ -169,7 +190,7 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
       // gathered) — a plausible cause of the empty-output runs seen before
       // this fix.
       max_tokens: 8192,
-      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
       tools: isLastChance
         ? [submitFindingsTool]
         : [clinicalTrialsToolDefinition, secEdgarSearchToolDefinition, webSearchTool, submitFindingsTool],
@@ -199,7 +220,7 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
         backfillEmptyArrayFields(submitBlock.input)
       );
       if (parsed.success) {
-        const missing = findMissingReferenceCompetitors(parsed.data);
+        const missing = findMissingReferenceCompetitors(parsed.data, input.indication);
         const citationUrls = [
           ...parsed.data.approvedCompetitors.map((c) => c.citation.sourceUrl),
           ...parsed.data.lateStagePipeline.map((a) => a.citation.sourceUrl),

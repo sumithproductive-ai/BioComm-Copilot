@@ -98,6 +98,7 @@ enum CriticFlagType {
   StaleData
   OverconfidentRegulatory
   Contradiction
+  UnrealisticFinancialAssumption
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +179,16 @@ model MemoRun {
   // Score formula (see synthesis.ts)
   patentLandscapeSummary String?
   patentLandscapeLabel   ClaimLabel?
+
+  // Financial Valuation / rNPV Agent (9th agent, informational only — same
+  // Confidence Score exclusion as Patents). Stored as one JSON blob rather
+  // than normalized into a dozen new tables (assumptions, yearly cash
+  // flows, sensitivity scenarios) — this output is a single nested
+  // computed structure the memo always renders as a whole, not something
+  // ever queried row-by-row like Trials or ComparableDeals, so the schema
+  // overhead of full normalization buys nothing here. Validated against
+  // rnpvOutputSchema on every read (lib/agents/persist.ts's getRnpvOutput).
+  rnpvOutput Json?
 
   decisionSummary DecisionSummary?
 

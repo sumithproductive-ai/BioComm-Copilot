@@ -20,6 +20,7 @@ export const AGENT_ROSTER: AgentRosterEntry[] = [
   { key: "dealComparables", label: "Deal Comparables" },
   { key: "regulatory", label: "Regulatory" },
   { key: "patents", label: "Patent Landscape" },
+  { key: "rnpv", label: "Financial Valuation (rNPV)" },
   { key: "critic", label: "Critic Review" },
   { key: "synthesis", label: "Synthesis" },
 ];
