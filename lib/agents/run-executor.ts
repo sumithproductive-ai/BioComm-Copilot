@@ -13,6 +13,7 @@ import { AGENT_ROSTER } from "./roster";
 import {
   initializeAgentProgress,
   upsertAgentRunStatus,
+  persistLangfuseSession,
   getAgentProgress,
   persistClinicalResearchOutput,
   persistCompetitiveIntelligenceOutput,
@@ -70,6 +71,7 @@ export async function executeAssessmentRun(
       {
         onAgentStatusChange: (agentName, status, info) =>
           upsertAgentRunStatus(memoRunId, agentName, status, info.attempt, info.note),
+        onSessionStart: (sessionId) => persistLangfuseSession(memoRunId, sessionId),
       }
     );
 
