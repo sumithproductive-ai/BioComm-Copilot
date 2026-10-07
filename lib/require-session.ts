@@ -16,9 +16,16 @@ export class UnauthorizedError extends Error {
   }
 }
 
-export async function requireSession(): Promise<void> {
+// Returns the signed-in user's email — existing call sites that only
+// awaited this for its throw-on-unauthenticated side effect (every one
+// before billing existed) are unaffected, since ignoring a return value is
+// always valid. Billing needs this email as the key into Subscription;
+// rather than add a second near-duplicate session check, this one now
+// does double duty.
+export async function requireSession(): Promise<string> {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) {
     throw new UnauthorizedError();
   }
+  return session.user.email;
 }

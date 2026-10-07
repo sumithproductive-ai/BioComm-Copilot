@@ -6,6 +6,7 @@ import { executeAssessmentRun } from "@/lib/agents/run-executor";
 import { assessmentRunQueue } from "@/lib/agents/run-queue";
 import { checkRateLimit, getClientKey, RateLimitError } from "@/lib/rate-limit";
 import { requireSession, UnauthorizedError } from "@/lib/require-session";
+import { reserveUsageSlots, NoActiveSubscriptionError, UsageCapExceededError } from "@/lib/billing/usage";
 import { extractPdfText } from "@/lib/pdf-extract";
 
 export type RunAssessmentState = {
@@ -136,8 +137,9 @@ export async function runAssessment(
   _prevState: RunAssessmentState,
   formData: FormData
 ): Promise<RunAssessmentState> {
+  let userEmail: string;
   try {
-    await requireSession();
+    userEmail = await requireSession();
     checkRateLimit(await getClientKey(), RUN_ASSESSMENT_LIMIT);
   } catch (err) {
     if (err instanceof UnauthorizedError) return { error: err.message };
@@ -148,6 +150,18 @@ export async function runAssessment(
   const memoRun = await db.memoRun.findUnique({ where: { id: memoRunId } });
   if (!memoRun) {
     return { error: "Run not found." };
+  }
+
+  // Claimed here, before extraction/dispatch — a run that fails this check
+  // never reaches the agents, so no Anthropic spend happens for a denied
+  // request. See lib/billing/usage.ts for why this has to be a real DB
+  // transaction, not an in-memory check like lib/rate-limit.ts above.
+  try {
+    await reserveUsageSlots(userEmail, 1);
+  } catch (err) {
+    if (err instanceof NoActiveSubscriptionError) return { error: err.message };
+    if (err instanceof UsageCapExceededError) return { error: err.message };
+    throw err;
   }
 
   const deepResearch = formData.get("deepResearch") === "on";

@@ -8,6 +8,7 @@ import { executeAssessmentRun, type ExecutableMemoRun } from "@/lib/agents/run-e
 import { assessmentRunQueue } from "@/lib/agents/run-queue";
 import { checkRateLimit, getClientKey, RateLimitError } from "@/lib/rate-limit";
 import { requireSession, UnauthorizedError } from "@/lib/require-session";
+import { reserveUsageSlots, NoActiveSubscriptionError, UsageCapExceededError } from "@/lib/billing/usage";
 
 export type CreateBatchState = {
   error?: string;
@@ -32,8 +33,9 @@ export async function createBatchAssessments(
   _prevState: CreateBatchState,
   formData: FormData
 ): Promise<CreateBatchState> {
+  let userEmail: string;
   try {
-    await requireSession();
+    userEmail = await requireSession();
     checkRateLimit(await getClientKey(), CREATE_BATCH_LIMIT);
   } catch (err) {
     if (err instanceof UnauthorizedError) return { error: err.message };
@@ -59,6 +61,18 @@ export async function createBatchAssessments(
   const parsed = batchProfileSchema.safeParse(profiles);
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Fix the highlighted profiles and try again." };
+  }
+
+  // Reserve every slot the batch needs atomically, all-or-nothing, before
+  // creating any MemoRun row — so a batch that can't fully fit the
+  // remaining cap fails cleanly up front instead of silently queuing a
+  // partial batch with no indication which profiles actually got claimed.
+  try {
+    await reserveUsageSlots(userEmail, parsed.data.length);
+  } catch (err) {
+    if (err instanceof NoActiveSubscriptionError) return { error: err.message };
+    if (err instanceof UsageCapExceededError) return { error: err.message };
+    throw err;
   }
 
   const memoRuns: ExecutableMemoRun[] = [];

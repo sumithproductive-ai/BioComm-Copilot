@@ -562,3 +562,99 @@ model Patent {
 
   @@map("patent")
 }
+
+// ---------------------------------------------------------------------------
+// Billing (scaffold — see lib/billing/*.ts). Keyed off email, not a new
+// User table: email is already the stable identity BioComm Copilot uses
+// throughout (ALLOWED_EMAILS, the whole auth model). Deliberately no Plan
+// table — plans are a small, hand-maintained config keyed by Stripe Price
+// ID (lib/billing/plans.ts), not DB rows, since they're expected to change
+// by deploy, not by admin action, at this scale. Stripe is the invoicing
+// system of record; this app's own runsUsedThisPeriod/runCap counter is the
+// enforcement system of record, since Stripe's own usage metering has
+// reporting lag and isn't meant for real-time access control.
+// ---------------------------------------------------------------------------
+
+enum SubscriptionStatus {
+  Active
+  Trialing
+  PastDue
+  Canceled
+  Unpaid
+  Incomplete
+}
+
+model Subscription {
+  id        String  @id @default(uuid()) @db.Uuid
+  userEmail String  @unique
+
+  stripeCustomerId     String  @unique
+  // Null until checkout actually completes (Incomplete status) — Stripe
+  // assigns this id, not us, so it can't be required up front.
+  stripeSubscriptionId String? @unique
+  stripePriceId        String?
+
+  status SubscriptionStatus @default(Incomplete)
+
+  currentPeriodStart DateTime? @db.Timestamptz(6)
+  currentPeriodEnd   DateTime? @db.Timestamptz(6)
+  cancelAtPeriodEnd  Boolean   @default(false)
+
+  // Denormalized from the plan at subscribe/renewal time rather than looked
+  // up live from lib/billing/plans.ts on every check — so a mid-period
+  // price change never retroactively alters a period a customer already
+  // paid for under the old cap.
+  runsUsedThisPeriod Int @default(0)
+  runCap             Int @default(0)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  usageRecords UsageRecord[]
+
+  @@map("subscription")
+}
+
+enum UsageRecordStatus {
+  // Slot claimed at run-start, before Anthropic spend is committed — see
+  // lib/billing/usage.ts's reserveUsageSlots(). Not yet reconciled against
+  // how the run actually finished.
+  Reserved
+  Consumed
+  Refunded
+}
+
+model UsageRecord {
+  id             String       @id @default(uuid()) @db.Uuid
+  subscriptionId String       @db.Uuid
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  // Denormalized alongside subscriptionId (not just reachable via the
+  // relation) so a support lookup by customer email never needs a join.
+  userEmail String
+
+  // Deliberately not a formal relation to MemoRun — this table's only job
+  // is an audit trail ("which plan-period did this run's cost count
+  // against"), not a join target for memo queries. Null briefly for a
+  // batch submission, where slots are reserved before the MemoRun rows
+  // exist yet (see lib/actions/create-batch.ts).
+  memoRunId String? @db.Uuid
+
+  status UsageRecordStatus @default(Reserved)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("usage_record")
+}
+
+// Idempotency ledger — Stripe redelivers webhook events, this is how the
+// handler no-ops on a repeat instead of double-applying a subscription
+// change.
+model StripeWebhookEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  stripeEventId String   @unique
+  type          String
+  processedAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("stripe_webhook_event")
+}
