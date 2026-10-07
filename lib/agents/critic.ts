@@ -12,6 +12,20 @@ import { UC_COMPETITOR_REFERENCE_LIST, isUcRelatedIndication } from "@/lib/confi
 
 const client = new Anthropic();
 
+// Deliberately NOT downgraded to Haiku, unlike synthesis.ts's MODEL const.
+// Tested first, not assumed: a 3-run comparison against a fixture with 6
+// deliberately planted problems (one per check type) showed Haiku matching
+// Sonnet on every planted issue, zero misses, with Sonnet only adding a
+// few extra secondary findings beyond the planted set. The result didn't
+// rule Haiku out on quality. The decision to keep Sonnet anyway is a
+// cost/risk call: Critic is a single no-tool call, already the cheapest
+// agent in the pipeline relative to the 6 research agents' multi-iteration
+// tool loops, so the dollar savings here are the smallest of any agent —
+// while Critic is this product's core trust mechanism (the "nobody grades
+// their own homework" layer) and its failure mode is silent, a weaker
+// model doesn't produce an obviously thin output, it just quietly misses a
+// problem next time on real, messier data than this one clean test
+// fixture covered. Small upside, asymmetric downside.
 const MODEL = "claude-sonnet-5";
 const MAX_ATTEMPTS = 3;
 

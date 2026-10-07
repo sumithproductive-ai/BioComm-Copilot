@@ -28,7 +28,15 @@ import {
 
 const client = new Anthropic();
 
-const MODEL = "claude-sonnet-5";
+// Haiku, not Sonnet — this agent is "pure compilation" by design (see the
+// module comment above): no tools, no open-ended judgment, just summarizing
+// and formatting Key Risks/Route Recommendations from structured JSON
+// every other agent already produced and validated. The Decision Summary
+// itself is computed entirely in code, not by this model call at all. A
+// cheaper model is a safe fit for an extraction-shaped task; Critic is a
+// different story (see lib/agents/critic.ts's own comment on why it stays
+// on Sonnet pending a real quality comparison).
+const MODEL = "claude-haiku-4-5-20251001";
 const MAX_ATTEMPTS = 3;
 
 // ---------------------------------------------------------------------------
