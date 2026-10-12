@@ -9,6 +9,7 @@ import { UC_COMPETITOR_REFERENCE_LIST, isUcRelatedIndication } from "@/lib/confi
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
+import { isMockAgentsEnabled } from "./mock-mode";
 
 const client = new Anthropic();
 
@@ -105,6 +106,18 @@ export async function runRegulatoryAgent(
   input: RegulatoryInput,
   parentSpan?: LangfuseSpanClient
 ): Promise<RegulatoryOutput> {
+  if (isMockAgentsEnabled()) {
+    return regulatoryOutputSchema.parse({
+      guidanceDocuments: [],
+      endpointPrecedent: [],
+      priorApprovalsSameMechanism: [],
+      developmentTimelineEstimate: {
+        summary: "[MOCK] Test mode — no real research performed (MOCK_AGENTS_FOR_LOCAL_TEST).",
+        label: "Assumption",
+      },
+    });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   const systemPrompt = buildSystemPrompt(input.indication);
 

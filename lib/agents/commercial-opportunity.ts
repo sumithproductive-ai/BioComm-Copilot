@@ -13,6 +13,7 @@ import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
+import { isMockAgentsEnabled } from "./mock-mode";
 
 const client = new Anthropic();
 
@@ -309,6 +310,18 @@ export async function runCommercialOpportunityAgent(
   parentSpan?: LangfuseSpanClient,
   competitiveOutput?: Promise<CompetitiveIntelligenceOutput | null>
 ): Promise<CommercialOpportunityOutput> {
+  if (isMockAgentsEnabled()) {
+    return commercialOpportunityOutputSchema.parse({
+      patientPopulationEstimate: {
+        value: "[MOCK] placeholder — no real research performed (MOCK_AGENTS_FOR_LOCAL_TEST)",
+        label: "Unknown",
+      },
+      unmetNeed: { summary: "[MOCK] Test mode.", citations: [] },
+      marketCrowdingAssessment: { summary: "[MOCK] Test mode.", consistentWithCompetitiveLandscape: true },
+      differentiationPotential: { summary: "[MOCK] Test mode.", label: "Unknown" },
+    });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
 
   const messages: Anthropic.MessageParam[] = [

@@ -25,6 +25,7 @@ import {
   findMissingReferenceCompetitors,
   isUcRelatedIndication,
 } from "@/lib/config/uc-competitors";
+import { isMockAgentsEnabled } from "./mock-mode";
 
 const client = new Anthropic();
 
@@ -246,6 +247,21 @@ export async function runSynthesisAgent(
   parentSpan?: LangfuseSpanClient
 ): Promise<SynthesisOutput> {
   const today = new Date().toISOString().slice(0, 10);
+
+  if (isMockAgentsEnabled()) {
+    const keyRisks: z.infer<typeof keyRiskSchema>[] = [
+      { description: "[MOCK] Test mode — no real research performed (MOCK_AGENTS_FOR_LOCAL_TEST).", label: "Unknown" },
+    ];
+    const routeRecommendations: z.infer<typeof routeRecommendationSchema>[] = [
+      { description: "[MOCK] Unset MOCK_AGENTS_FOR_LOCAL_TEST and re-run for real findings.", label: "Assumption" },
+    ];
+    // Reuses the real, deterministic decision-summary formula above — only
+    // the LLM-drafted keyRisks/routeRecommendations are mocked, so the
+    // Confidence Score shown still reflects whatever real or mocked
+    // ResearchOutputs/CriticOutput this run actually produced.
+    const decisionSummary = computeDecisionSummary(input.researchOutputs, input.criticOutput, keyRisks.length, input.indication);
+    return synthesisOutputSchema.parse({ decisionSummary, keyRisks, routeRecommendations, asOfDate: today });
+  }
 
   const messages: Anthropic.MessageParam[] = [
     {

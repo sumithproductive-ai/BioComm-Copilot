@@ -11,6 +11,7 @@ import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
+import { isMockAgentsEnabled, mockCitation } from "./mock-mode";
 
 const client = new Anthropic();
 
@@ -101,6 +102,19 @@ export async function runClinicalResearchAgent(
   input: ClinicalResearchInput,
   parentSpan?: LangfuseSpanClient
 ): Promise<ClinicalResearchOutput> {
+  if (isMockAgentsEnabled()) {
+    return clinicalResearchOutputSchema.parse({
+      trials: [],
+      mechanismOfAction: {
+        summary: "[MOCK] Test mode — no real research performed (MOCK_AGENTS_FOR_LOCAL_TEST).",
+        label: "Unknown",
+        citations: [mockCitation()],
+      },
+      safetySignals: [],
+      similarDrugFailures: [],
+    });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
 
   // Provenance tracking for the "never invent an NCT number" hard rule —

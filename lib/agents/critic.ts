@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { LangfuseSpanClient } from "langfuse";
 import { criticFlagSchema, criticOutputSchema, type CriticOutput, type ResearchOutputs } from "./schemas";
 import { UC_COMPETITOR_REFERENCE_LIST, isUcRelatedIndication } from "@/lib/config/uc-competitors";
+import { isMockAgentsEnabled } from "./mock-mode";
 
 const client = new Anthropic();
 
@@ -144,6 +145,10 @@ export async function runCriticAgent(
   input: CriticInput,
   parentSpan?: LangfuseSpanClient
 ): Promise<CriticOutput> {
+  if (isMockAgentsEnabled()) {
+    return criticOutputSchema.parse({ flags: [], hasCriticalFlags: false });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   const systemPrompt = buildSystemPrompt(input.indication);
 
