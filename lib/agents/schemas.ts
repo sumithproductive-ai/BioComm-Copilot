@@ -417,6 +417,29 @@ export const rnpvComputedSchema = z.object({
 });
 export type RnpvComputed = z.infer<typeof rnpvComputedSchema>;
 
+// User-provided override for the three inputs that most directly drive the
+// final number — phase-transition probabilities, discount rate, exclusivity
+// years. Deliberately NOT sent to the rNPV Agent's prompt (rnpv.ts) before it
+// drafts its own assumptions: the point of the side-by-side comparison is an
+// independent AI estimate next to the user's own validated numbers, and
+// showing the agent the override first would just anchor it into copying
+// those numbers back, defeating the comparison. Partial — any of the three
+// fields can be supplied alone; computeRnpv falls back to the AI-drafted
+// value for anything omitted.
+export const phaseProbabilityOverrideSchema = z.object({
+  fromStage: z.string().trim().min(1),
+  toStage: z.string().trim().min(1),
+  probability: z.number().min(0).max(1),
+});
+export type PhaseProbabilityOverride = z.infer<typeof phaseProbabilityOverrideSchema>;
+
+export const financialAssumptionsOverrideSchema = z.object({
+  phaseProbabilities: z.array(phaseProbabilityOverrideSchema).min(1).optional(),
+  discountRatePercent: z.number().min(0).max(100).optional(),
+  exclusivityYears: z.number().positive().optional(),
+});
+export type FinancialAssumptionsOverride = z.infer<typeof financialAssumptionsOverrideSchema>;
+
 export const rnpvOutputSchema = z.object({
   assumptions: financialAssumptionsSchema,
   computed: rnpvComputedSchema,
@@ -425,6 +448,12 @@ export const rnpvOutputSchema = z.object({
     label: claimLabelSchema,
   }),
   methodologyNote: z.string(),
+  // Present only when the user supplied their own assumptions for this run.
+  // providedComputed runs the exact same deterministic calculator
+  // (rnpv-calc.ts) against assumptions with the override fields merged in —
+  // same math, different inputs, so the two totals are directly comparable.
+  providedOverride: financialAssumptionsOverrideSchema.nullable(),
+  providedComputed: rnpvComputedSchema.nullable(),
 });
 export type RnpvOutput = z.infer<typeof rnpvOutputSchema>;
 

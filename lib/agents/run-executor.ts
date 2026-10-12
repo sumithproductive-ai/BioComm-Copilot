@@ -25,6 +25,7 @@ import {
   persistCriticOutput,
   persistSynthesisOutput,
 } from "./persist";
+import type { FinancialAssumptionsOverride } from "./schemas";
 
 export type ExecutableMemoRun = {
   id: string;
@@ -45,7 +46,8 @@ export async function executeAssessmentRun(
   // why), not a record of what was uploaded.
   supplementaryDocuments?: string,
   supplementaryDocumentCount = 0,
-  supplementaryDocumentNote?: string
+  supplementaryDocumentNote?: string,
+  financialAssumptionsOverride?: FinancialAssumptionsOverride
 ): Promise<void> {
   const memoRunId = memoRun.id;
 
@@ -67,6 +69,7 @@ export async function executeAssessmentRun(
         context: memoRun.context ?? undefined,
         deepResearch,
         supplementaryDocuments,
+        financialAssumptionsOverride,
       },
       {
         onAgentStatusChange: (agentName, status, info) =>

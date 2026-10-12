@@ -40,13 +40,65 @@ const WARNING_STYLES: Record<string, string> = {
 };
 
 export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
-  const { assumptions, computed, benchmarkingNotes, methodologyNote } = data;
+  const { assumptions, computed, benchmarkingNotes, methodologyNote, providedOverride, providedComputed } = data;
 
   return (
     <div className="flex flex-col gap-6">
       <div className="rounded-[9px] border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
         {methodologyNote}
       </div>
+
+      {providedOverride && providedComputed && (
+        <div>
+          <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+            AI-Estimated vs. Your Provided Assumptions
+          </h3>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-[9px] border border-border bg-white px-4 py-3">
+              <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
+                AI-estimated
+              </Badge>
+              <p className="mt-2 text-lg font-bold text-brand-navy">{formatUsd(computed.totalRnpvUsd)}</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Overall probability of success: {(computed.overallProbabilityOfSuccess * 100).toFixed(2)}% ·
+                Discount rate: {assumptions.discountRatePercent}% · Exclusivity: {assumptions.exclusivityYears}{" "}
+                years
+              </p>
+            </div>
+            <div className="rounded-[9px] border border-brand-navy/30 bg-blue-50/50 px-4 py-3">
+              <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
+                Your provided assumptions
+              </Badge>
+              <p className="mt-2 text-lg font-bold text-brand-navy">{formatUsd(providedComputed.totalRnpvUsd)}</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Overall probability of success: {(providedComputed.overallProbabilityOfSuccess * 100).toFixed(2)}%
+                · Discount rate: {providedOverride.discountRatePercent ?? assumptions.discountRatePercent}% ·
+                Exclusivity: {providedOverride.exclusivityYears ?? assumptions.exclusivityYears} years
+              </p>
+            </div>
+          </div>
+          {providedOverride.phaseProbabilities && (
+            <div className="mt-2 flex flex-col gap-1.5">
+              {providedOverride.phaseProbabilities.map((gate, i) => (
+                <div
+                  key={i}
+                  className="flex items-center justify-between rounded-[9px] border border-border bg-white px-3 py-2 text-xs"
+                >
+                  <span className="text-foreground">
+                    {gate.fromStage} → {gate.toStage}
+                  </span>
+                  <span className="font-semibold text-brand-navy">{(gate.probability * 100).toFixed(0)}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-2 text-xs text-muted-foreground">
+            Both figures are computed by the same deterministic calculator — only the inputs differ.
+            Development costs, timeline, and revenue assumptions below are the AI-drafted figures in both
+            cases; this comparison isolates phase probabilities, discount rate, and exclusivity years.
+          </p>
+        </div>
+      )}
 
       {computed.plausibilityWarnings.length > 0 && (
         <div className="flex flex-col gap-2">

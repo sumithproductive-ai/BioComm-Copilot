@@ -467,6 +467,30 @@ export function AssessmentReportDocument({
           <>
             <SectionTitle>Financial Valuation (rNPV)</SectionTitle>
             <Text style={[styles.muted, { marginBottom: 6 }]}>{rnpv.methodologyNote}</Text>
+            {rnpv.providedOverride && rnpv.providedComputed && (
+              <View style={{ marginBottom: 8 }}>
+                <Text style={styles.subheading}>AI-estimated vs. provided assumptions</Text>
+                <View style={styles.row}>
+                  <View style={[styles.statTile, { width: "48%" }]}>
+                    <Text style={styles.statLabel}>AI-estimated</Text>
+                    <Text style={styles.statValue}>{formatUsd(rnpv.computed.totalRnpvUsd)}</Text>
+                    <Text style={[styles.muted, { marginTop: 2 }]}>
+                      POS {(rnpv.computed.overallProbabilityOfSuccess * 100).toFixed(2)}% · Discount{" "}
+                      {rnpv.assumptions.discountRatePercent}% · Exclusivity {rnpv.assumptions.exclusivityYears}y
+                    </Text>
+                  </View>
+                  <View style={[styles.statTile, { width: "48%", borderColor: COLORS.navy }]}>
+                    <Text style={styles.statLabel}>Your provided assumptions</Text>
+                    <Text style={styles.statValue}>{formatUsd(rnpv.providedComputed.totalRnpvUsd)}</Text>
+                    <Text style={[styles.muted, { marginTop: 2 }]}>
+                      POS {(rnpv.providedComputed.overallProbabilityOfSuccess * 100).toFixed(2)}% · Discount{" "}
+                      {rnpv.providedOverride.discountRatePercent ?? rnpv.assumptions.discountRatePercent}% ·
+                      Exclusivity {rnpv.providedOverride.exclusivityYears ?? rnpv.assumptions.exclusivityYears}y
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
             {rnpv.computed.plausibilityWarnings.map((warning, i) => (
               <View
                 key={i}
