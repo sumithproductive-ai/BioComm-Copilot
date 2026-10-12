@@ -12,6 +12,7 @@ import { secEdgarSearchToolDefinition, searchSecFilings } from "./tools/sec-edga
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
+import { isMockAgentsEnabled } from "./mock-mode";
 
 const client = new Anthropic();
 
@@ -96,6 +97,14 @@ export async function runDealComparablesAgent(
   input: DealComparablesInput,
   parentSpan?: LangfuseSpanClient
 ): Promise<DealComparablesOutput> {
+  if (isMockAgentsEnabled()) {
+    return dealComparablesOutputSchema.parse({
+      comparableDeals: [],
+      noCompFound: true,
+      noCompExplanation: "[MOCK] Test mode — no real research performed (MOCK_AGENTS_FOR_LOCAL_TEST).",
+    });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
 
   // Track every hostname that actually appeared in a real result this run —

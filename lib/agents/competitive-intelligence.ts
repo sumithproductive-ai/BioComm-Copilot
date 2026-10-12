@@ -18,6 +18,7 @@ import {
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
+import { isMockAgentsEnabled } from "./mock-mode";
 
 const client = new Anthropic();
 
@@ -140,6 +141,16 @@ export async function runCompetitiveIntelligenceAgent(
   input: CompetitiveIntelligenceInput,
   parentSpan?: LangfuseSpanClient
 ): Promise<CompetitiveIntelligenceOutput> {
+  if (isMockAgentsEnabled()) {
+    return competitiveIntelligenceOutputSchema.parse({
+      approvedCompetitors: [],
+      lateStagePipeline: [],
+      positioningGaps: [
+        { description: "[MOCK] Test mode — no real research performed (MOCK_AGENTS_FOR_LOCAL_TEST).", label: "Unknown" },
+      ],
+    });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   const systemPrompt = buildSystemPrompt(input.indication);
 
