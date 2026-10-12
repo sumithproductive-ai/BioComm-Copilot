@@ -17,16 +17,19 @@ import {
   rnpvSubmissionSchema,
   rnpvOutputSchema,
   type RnpvOutput,
+  type FinancialAssumptionsOverride,
   type CommercialOpportunityOutput,
   type RegulatoryOutput,
   type DealComparablesOutput,
   type PatentOutput,
 } from "./schemas";
-import { computeRnpv } from "./rnpv-calc";
+import { computeRnpv, applyFinancialAssumptionsOverride } from "./rnpv-calc";
 import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
 import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
+import { isMockAgentsEnabled } from "./mock-mode";
+import type { FinancialAssumptions } from "./schemas";
 
 const client = new Anthropic();
 
@@ -87,6 +90,12 @@ export type RnpvInput = {
   // agent's prior pass, fed back for a targeted second pass.
   reviewerFeedback?: string[];
   supplementaryDocuments?: string;
+  // User-supplied phase-probability/discount-rate/exclusivity-years
+  // override (components/agent-progress.tsx's "Known Financial Assumptions"
+  // form). Never included in the prompt below — see the comment on
+  // financialAssumptionsOverrideSchema for why keeping the agent blind to it
+  // matters.
+  financialAssumptionsOverride?: FinancialAssumptionsOverride;
 };
 
 function isToolUseBlock(block: Anthropic.ContentBlock): block is Anthropic.ToolUseBlock {
@@ -136,10 +145,73 @@ function summarizeGroundingContext(input: RnpvInput): string {
   return parts.join("\n");
 }
 
+// Placeholder assumptions for mock mode — deliberately round, generic
+// numbers (never claimed to be researched). Still run through the exact
+// same real computeRnpv()/applyFinancialAssumptionsOverride() production
+// code below, so this mock path genuinely exercises the calculator and the
+// override comparison feature, just without the LLM drafting the inputs.
+function mockFinancialAssumptions(): FinancialAssumptions {
+  return {
+    phaseProbabilities: [
+      { fromStage: "Preclinical", toStage: "Phase 1", probability: 0.1, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { fromStage: "Phase 1", toStage: "Phase 2", probability: 0.45, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { fromStage: "Phase 2", toStage: "Phase 3", probability: 0.2, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { fromStage: "Phase 3", toStage: "Approval", probability: 0.35, label: "Assumption", rationale: "[MOCK] placeholder." },
+    ],
+    developmentCosts: [
+      { stage: "Preclinical", lowUsd: 5_000_000, highUsd: 10_000_000, label: "Assumption" },
+      { stage: "Phase 1", lowUsd: 10_000_000, highUsd: 20_000_000, label: "Assumption" },
+      { stage: "Phase 2", lowUsd: 20_000_000, highUsd: 40_000_000, label: "Assumption" },
+      { stage: "Phase 3", lowUsd: 50_000_000, highUsd: 100_000_000, label: "Assumption" },
+    ],
+    revenueAssumptions: {
+      treatablePopulationCount: 500_000,
+      treatablePopulationDescription: "[MOCK] placeholder population",
+      treatablePopulationLabel: "Assumption",
+      peakPenetrationRateLow: 0.01,
+      peakPenetrationRateHigh: 0.03,
+      pricePerPatientUsdLow: 50_000,
+      pricePerPatientUsdHigh: 100_000,
+      yearsToPeakSales: 4,
+      label: "Assumption",
+    },
+    timeline: [
+      { stage: "Preclinical", durationYears: 2, label: "Assumption" },
+      { stage: "Phase 1", durationYears: 1.5, label: "Assumption" },
+      { stage: "Phase 2", durationYears: 2, label: "Assumption" },
+      { stage: "Phase 3", durationYears: 3, label: "Assumption" },
+    ],
+    discountRatePercent: 18,
+    discountRateRationale: "[MOCK] placeholder discount rate for test mode.",
+    exclusivityYears: 10,
+  };
+}
+
 export async function runRnpvAgent(
   input: RnpvInput,
   parentSpan?: LangfuseSpanClient
 ): Promise<RnpvOutput> {
+  if (isMockAgentsEnabled()) {
+    const assumptions = mockFinancialAssumptions();
+    const computed = computeRnpv(assumptions, input.stage);
+    const providedOverride = input.financialAssumptionsOverride ?? null;
+    const providedComputed = providedOverride
+      ? computeRnpv(applyFinancialAssumptionsOverride(assumptions, providedOverride), input.stage)
+      : null;
+    return rnpvOutputSchema.parse({
+      assumptions,
+      computed,
+      benchmarkingNotes: {
+        summary: "[MOCK] Test mode — no real research performed (MOCK_AGENTS_FOR_LOCAL_TEST).",
+        label: "Unknown",
+      },
+      methodologyNote:
+        "This is a simplified risk-adjusted NPV model built from the assumptions above, computed deterministically (not LLM-generated arithmetic). It is a starting point for diligence, not a definitive valuation — every input is an estimate, several with wide uncertainty at this stage, and standard human review is still required.",
+      providedOverride,
+      providedComputed,
+    });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   const knownHostnames = new Set<string>();
 
@@ -216,12 +288,21 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
         const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
         if (unverified.length === 0) {
           const computed = computeRnpv(parsed.data.assumptions, input.stage);
+          const providedOverride = input.financialAssumptionsOverride ?? null;
+          const providedComputed = providedOverride
+            ? computeRnpv(
+                applyFinancialAssumptionsOverride(parsed.data.assumptions, providedOverride),
+                input.stage
+              )
+            : null;
           return rnpvOutputSchema.parse({
             assumptions: parsed.data.assumptions,
             computed,
             benchmarkingNotes: parsed.data.benchmarkingNotes,
             methodologyNote:
               "This is a simplified risk-adjusted NPV model built from the assumptions above, computed deterministically (not LLM-generated arithmetic). It is a starting point for diligence, not a definitive valuation — every input is an estimate, several with wide uncertainty at this stage, and standard human review is still required.",
+            providedOverride,
+            providedComputed,
           });
         }
         messages.push({

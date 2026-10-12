@@ -7,6 +7,7 @@ import { assessmentRunQueue } from "@/lib/agents/run-queue";
 import { checkRateLimit, getClientKey, RateLimitError } from "@/lib/rate-limit";
 import { requireSession, UnauthorizedError } from "@/lib/require-session";
 import { extractPdfText } from "@/lib/pdf-extract";
+import { financialAssumptionsOverrideSchema, type FinancialAssumptionsOverride } from "@/lib/agents/schemas";
 
 export type RunAssessmentState = {
   error?: string;
@@ -56,6 +57,53 @@ type DocumentExtractionResult = {
   // whose whole premise is "know what data actually went into this."
   note: string | undefined;
 };
+
+// "Known Financial Assumptions" — components/agent-progress.tsx's optional
+// advanced section. Best-effort: a malformed row (empty stage name,
+// non-numeric probability) is silently dropped rather than failing the
+// whole run, same posture extractSupplementaryDocuments below takes toward
+// a bad file. Returns undefined (not an empty object) when nothing usable
+// was supplied, so runRnpvAgent knows to skip the side-by-side comparison
+// entirely rather than computing one against a no-op override.
+function extractFinancialAssumptionsOverride(formData: FormData): FinancialAssumptionsOverride | undefined {
+  const fromStages = formData.getAll("rnpvGateFromStage[]").map(String);
+  const toStages = formData.getAll("rnpvGateToStage[]").map(String);
+  const probabilities = formData.getAll("rnpvGateProbability[]").map(String);
+
+  const phaseProbabilities = fromStages
+    .map((fromStage, i) => {
+      const toStage = toStages[i]?.trim() ?? "";
+      const probabilityPercent = Number.parseFloat(probabilities[i] ?? "");
+      if (!fromStage.trim() || !toStage || Number.isNaN(probabilityPercent)) return null;
+      return {
+        fromStage: fromStage.trim(),
+        toStage,
+        probability: Math.min(100, Math.max(0, probabilityPercent)) / 100,
+      };
+    })
+    .filter((gate): gate is NonNullable<typeof gate> => gate !== null);
+
+  const discountRateRaw = formData.get("rnpvDiscountRatePercent");
+  const discountRatePercent =
+    typeof discountRateRaw === "string" && discountRateRaw.trim() !== "" ? Number.parseFloat(discountRateRaw) : NaN;
+
+  const exclusivityRaw = formData.get("rnpvExclusivityYears");
+  const exclusivityYears =
+    typeof exclusivityRaw === "string" && exclusivityRaw.trim() !== "" ? Number.parseFloat(exclusivityRaw) : NaN;
+
+  const candidate = {
+    phaseProbabilities: phaseProbabilities.length > 0 ? phaseProbabilities : undefined,
+    discountRatePercent: Number.isFinite(discountRatePercent) ? discountRatePercent : undefined,
+    exclusivityYears: Number.isFinite(exclusivityYears) && exclusivityYears > 0 ? exclusivityYears : undefined,
+  };
+
+  if (!candidate.phaseProbabilities && candidate.discountRatePercent === undefined && candidate.exclusivityYears === undefined) {
+    return undefined;
+  }
+
+  const parsed = financialAssumptionsOverrideSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : undefined;
+}
 
 // Reads any uploaded PDFs from the form, extracts their text, and returns
 // one combined string ready to inject into every agent's prompt. Files
@@ -156,6 +204,7 @@ export async function runAssessment(
     count: supplementaryDocumentCount,
     note: supplementaryDocumentNote,
   } = await extractSupplementaryDocuments(formData);
+  const financialAssumptionsOverride = extractFinancialAssumptionsOverride(formData);
 
   after(() =>
     assessmentRunQueue(() =>
@@ -164,7 +213,8 @@ export async function runAssessment(
         deepResearch,
         supplementaryDocuments,
         supplementaryDocumentCount,
-        supplementaryDocumentNote
+        supplementaryDocumentNote,
+        financialAssumptionsOverride
       )
     )
   );

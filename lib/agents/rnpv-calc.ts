@@ -17,6 +17,7 @@
 
 import type {
   FinancialAssumptions,
+  FinancialAssumptionsOverride,
   PlausibilityWarning,
   RnpvComputed,
   SensitivityScenario,
@@ -275,6 +276,41 @@ function checkPlausibility(
   }
 
   return warnings;
+}
+
+// Merges a user-supplied override on top of the AI-drafted assumptions so
+// computeRnpv can be run a second time against the user's own numbers — same
+// calculator, same clamping/scenario logic, just different inputs. Phase
+// probabilities are replaced wholesale (not merged gate-by-gate): the user's
+// gate chain may have a different number of stages than the AI drafted, and
+// partially splicing the two would produce a probability tree that matches
+// neither source. developmentCosts, timeline, and revenueAssumptions are
+// left as the AI drafted them (out of scope for this override — see the
+// "High-leverage only" scope decision), so the two totals aren't a pure A/B
+// on probability/discount/exclusivity alone, but they isolate the three
+// inputs most likely to explain a gap against an external valuation.
+export function applyFinancialAssumptionsOverride(
+  assumptions: FinancialAssumptions,
+  override: FinancialAssumptionsOverride
+): FinancialAssumptions {
+  return {
+    ...assumptions,
+    phaseProbabilities: override.phaseProbabilities
+      ? override.phaseProbabilities.map((gate) => ({
+          fromStage: gate.fromStage,
+          toStage: gate.toStage,
+          probability: gate.probability,
+          label: "Fact" as const,
+          rationale: "User-provided — supplied directly rather than drafted from industry benchmarks.",
+        }))
+      : assumptions.phaseProbabilities,
+    discountRatePercent: override.discountRatePercent ?? assumptions.discountRatePercent,
+    discountRateRationale:
+      override.discountRatePercent !== undefined
+        ? "User-provided discount rate."
+        : assumptions.discountRateRationale,
+    exclusivityYears: override.exclusivityYears ?? assumptions.exclusivityYears,
+  };
 }
 
 export function computeRnpv(assumptions: FinancialAssumptions, stage: string): RnpvComputed {

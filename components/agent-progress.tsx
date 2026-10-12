@@ -1,12 +1,13 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import { ArrowRight, CheckCircle2, CircleAlert, FileText, Loader2, Upload, XCircle } from "lucide-react";
+import { ArrowRight, CheckCircle2, CircleAlert, FileText, Loader2, Plus, Upload, X, XCircle } from "lucide-react";
 import { runAssessment, type RunAssessmentState } from "@/lib/actions/run-assessment";
 import { getAgentProgressForPolling } from "@/lib/actions/agent-progress";
 import { AGENT_ROSTER, type AgentLiveStatus } from "@/lib/agents/roster";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 const initialState: RunAssessmentState = {};
@@ -92,6 +93,120 @@ function DocumentUpload() {
 
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
     </div>
+  );
+}
+
+type PhaseGateRow = { id: string; fromStage: string; toStage: string; probability: string };
+
+// "Known Financial Assumptions" — optional advanced input feeding
+// lib/actions/run-assessment.ts's extractFinancialAssumptionsOverride. The
+// Financial Valuation agent still drafts its own assumptions independently
+// (it's never shown these values — see schemas.ts's comment on
+// financialAssumptionsOverrideSchema); rnpv.ts computes a second rNPV from
+// these on top of the AI-drafted one, and financial-valuation.tsx renders
+// both side by side. Scoped to the three inputs that most directly move the
+// final number — phase-transition probabilities, discount rate, exclusivity
+// years — not every assumption the model drafts.
+function KnownFinancialAssumptions() {
+  const [gates, setGates] = useState<PhaseGateRow[]>([]);
+
+  function addGate() {
+    setGates((prev) => [...prev, { id: crypto.randomUUID(), fromStage: "", toStage: "", probability: "" }]);
+  }
+  function removeGate(id: string) {
+    setGates((prev) => prev.filter((g) => g.id !== id));
+  }
+  function updateGate(id: string, field: "fromStage" | "toStage" | "probability", value: string) {
+    setGates((prev) => prev.map((g) => (g.id === id ? { ...g, [field]: value } : g)));
+  }
+
+  return (
+    <details className="rounded-[9px] border border-border bg-white px-3 py-2.5">
+      <summary className="cursor-pointer text-sm font-medium text-foreground">
+        Known financial assumptions
+        <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+          Optional — if you already have validated phase probabilities, a discount rate, or an exclusivity
+          estimate, add them here. The Financial Valuation agent still drafts its own assumptions
+          independently; we compute both and show them side by side.
+        </span>
+      </summary>
+
+      <div className="mt-3 flex flex-col gap-3">
+        <div className="flex flex-col gap-2">
+          {gates.map((gate) => (
+            <div key={gate.id} className="flex items-center gap-1.5">
+              <Input
+                placeholder="From stage (e.g. Preclinical)"
+                value={gate.fromStage}
+                onChange={(e) => updateGate(gate.id, "fromStage", e.target.value)}
+                name="rnpvGateFromStage[]"
+                className="text-xs"
+              />
+              <Input
+                placeholder="To stage (e.g. Phase 1)"
+                value={gate.toStage}
+                onChange={(e) => updateGate(gate.id, "toStage", e.target.value)}
+                name="rnpvGateToStage[]"
+                className="text-xs"
+              />
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                step="any"
+                placeholder="%"
+                value={gate.probability}
+                onChange={(e) => updateGate(gate.id, "probability", e.target.value)}
+                name="rnpvGateProbability[]"
+                className="w-20 shrink-0 text-xs"
+              />
+              <button
+                type="button"
+                onClick={() => removeGate(gate.id)}
+                aria-label="Remove gate"
+                className="shrink-0 text-muted-foreground hover:text-destructive"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          ))}
+          <Button type="button" variant="outline" size="sm" onClick={addGate} className="self-start">
+            <Plus className="size-3.5" />
+            Add phase gate
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1">
+            <label htmlFor="rnpvDiscountRatePercent" className="text-xs text-muted-foreground">
+              Discount rate %
+            </label>
+            <Input
+              id="rnpvDiscountRatePercent"
+              type="number"
+              min={0}
+              max={100}
+              step="any"
+              name="rnpvDiscountRatePercent"
+              placeholder="e.g. 10"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="rnpvExclusivityYears" className="text-xs text-muted-foreground">
+              Exclusivity years
+            </label>
+            <Input
+              id="rnpvExclusivityYears"
+              type="number"
+              min={0}
+              step="any"
+              name="rnpvExclusivityYears"
+              placeholder="e.g. 8"
+            />
+          </div>
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -220,6 +335,7 @@ export function AgentProgressSection({
     return (
       <form action={formAction} className="flex flex-col gap-3">
         <DocumentUpload />
+        <KnownFinancialAssumptions />
         <label className="flex items-start gap-2.5 rounded-[9px] border border-border bg-white px-3 py-2.5 text-sm has-[:checked]:border-brand-navy/30 has-[:checked]:bg-blue-50/50">
           <input
             type="checkbox"

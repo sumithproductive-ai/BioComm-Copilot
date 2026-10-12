@@ -32,6 +32,7 @@ import { runSynthesisAgent, type SynthesisInput } from "./synthesis";
 import type {
   CompetitiveIntelligenceOutput,
   CriticOutput,
+  FinancialAssumptionsOverride,
   ResearchOutputs,
   SynthesisOutput,
 } from "./schemas";
@@ -54,6 +55,9 @@ export type OrchestratorInput = {
   // persisted as files — see lib/pdf-extract.ts and run-assessment.ts).
   // Passed to every research agent, same as reviewerFeedback.
   supplementaryDocuments?: string;
+  // Optional user-supplied phase-probability/discount-rate/exclusivity
+  // override, rNPV Agent only (see rnpv.ts's RnpvInput comment).
+  financialAssumptionsOverride?: FinancialAssumptionsOverride;
 };
 
 // Critic's system prompt (critic.ts) uses these exact "section" strings —
@@ -361,6 +365,7 @@ export async function runOrchestrator(
     dealComparables: researchOutputs.dealComparables,
     patents: researchOutputs.patents,
     supplementaryDocuments: input.supplementaryDocuments,
+    financialAssumptionsOverride: input.financialAssumptionsOverride,
   };
   const rnpvRunResult = await runWithRetries(
     runTrace,
