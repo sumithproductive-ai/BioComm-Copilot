@@ -207,82 +207,22 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
     messages.push({ role: "assistant", content: response.content });
     for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
 
-    const submitBlock = response.content
-      .filter(isToolUseBlock)
-      .find((b) => b.name === "submit_findings");
-    if (submitBlock) {
-      const parsed = clinicalResearchOutputSchema.safeParse(
-        backfillEmptyArrayFields(submitBlock.input)
-      );
-      if (parsed.success) {
-        const unverifiedNctIds = parsed.data.trials
-          .map((t) => t.nctId)
-          .filter((nctId) => !realNctIds.has(nctId));
-        const citationUrls = [
-          ...parsed.data.mechanismOfAction.citations.map((c) => c.sourceUrl),
-          ...parsed.data.safetySignals.map((s) => s.citation.sourceUrl),
-          ...parsed.data.similarDrugFailures.map((f) => f.citation.sourceUrl),
-        ];
-        const unverifiedUrls = findUnverifiedUrls(citationUrls, knownHostnames);
-        if (unverifiedNctIds.length === 0 && unverifiedUrls.length === 0) return parsed.data;
-
-        const problems: string[] = [];
-        if (unverifiedNctIds.length > 0) {
-          problems.push(
-            `these NCT IDs are not in the search_clinical_trials results from this conversation: ${unverifiedNctIds.join(", ")} — never invent or recall an NCT ID from memory, search to confirm them or remove them from trials`
-          );
-        }
-        if (unverifiedUrls.length > 0) {
-          problems.push(
-            `these citation URLs (in mechanismOfAction, safetySignals, or similarDrugFailures) were not seen in any real search_pubmed or web_search result this conversation: ${unverifiedUrls.join(", ")} — search to confirm them or remove the unverifiable entries`
-          );
-        }
-        messages.push({
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: submitBlock.id,
-              content: `submit_findings input failed validation: ${problems.join("; ")}. Then call submit_findings again.`,
-              is_error: true,
-            },
-          ],
-        });
-        continue;
-      }
-      // Malformed structured output (confirmed in testing: the model can
-      // garble a large tool call into a single string field instead of the
-      // real JSON shape) — feed the validation error back as a tool_result
-      // so the model can self-correct in this same conversation, instead of
-      // throwing and forcing the Orchestrator to restart the whole agent
-      // from scratch on its next retry.
-      messages.push({
-        role: "user",
-        content: [
-          {
-            type: "tool_result",
-            tool_use_id: submitBlock.id,
-            content: `submit_findings input failed validation: ${parsed.error.message}. Re-read the schema and call submit_findings again with the corrected, complete JSON structure — every field must be the correct type (arrays are actual arrays, objects are actual objects, not strings).`,
-            is_error: true,
-          },
-        ],
-      });
-      continue;
-    }
-
     const toolUseBlocks = response.content.filter(isToolUseBlock);
+    const submitBlock = toolUseBlocks.find((b) => b.name === "submit_findings");
 
-    if (toolUseBlocks.length === 0) {
-      messages.push({
-        role: "user",
-        content:
-          "Continue researching, or call submit_findings once you have enough data.",
-      });
-      continue;
-    }
-
+    // Execute every non-submit_findings tool call in this response up front
+    // — needed even when submitBlock is also present and fails validation,
+    // since every tool_use block from this assistant turn needs a matching
+    // tool_result in the very next message or the next API call is rejected
+    // outright. Confirmed live (2026-10): "tool_use ids were found without
+    // tool_result blocks immediately after" when the model called
+    // submit_findings alongside a search tool in the same turn and
+    // submit_findings failed validation — the old code returned/continued
+    // right after handling submitBlock, silently dropping the sibling
+    // tool_use block's required response.
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of toolUseBlocks) {
+      if (block === submitBlock) continue;
       const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
       if (block.name === "search_clinical_trials") {
         const result = await searchClinicalTrials(
@@ -313,6 +253,68 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
       // web_search tool_use blocks are executed server-side by Anthropic —
       // their results are already in this same response, nothing to do here.
     }
+
+    if (submitBlock) {
+      const parsed = clinicalResearchOutputSchema.safeParse(
+        backfillEmptyArrayFields(submitBlock.input)
+      );
+      if (parsed.success) {
+        const unverifiedNctIds = parsed.data.trials
+          .map((t) => t.nctId)
+          .filter((nctId) => !realNctIds.has(nctId));
+        const citationUrls = [
+          ...parsed.data.mechanismOfAction.citations.map((c) => c.sourceUrl),
+          ...parsed.data.safetySignals.map((s) => s.citation.sourceUrl),
+          ...parsed.data.similarDrugFailures.map((f) => f.citation.sourceUrl),
+        ];
+        const unverifiedUrls = findUnverifiedUrls(citationUrls, knownHostnames);
+        if (unverifiedNctIds.length === 0 && unverifiedUrls.length === 0) return parsed.data;
+
+        const problems: string[] = [];
+        if (unverifiedNctIds.length > 0) {
+          problems.push(
+            `these NCT IDs are not in the search_clinical_trials results from this conversation: ${unverifiedNctIds.join(", ")} — never invent or recall an NCT ID from memory, search to confirm them or remove them from trials`
+          );
+        }
+        if (unverifiedUrls.length > 0) {
+          problems.push(
+            `these citation URLs (in mechanismOfAction, safetySignals, or similarDrugFailures) were not seen in any real search_pubmed or web_search result this conversation: ${unverifiedUrls.join(", ")} — search to confirm them or remove the unverifiable entries`
+          );
+        }
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: submitBlock.id,
+          content: `submit_findings input failed validation: ${problems.join("; ")}. Then call submit_findings again.`,
+          is_error: true,
+        });
+        messages.push({ role: "user", content: toolResults });
+        continue;
+      }
+      // Malformed structured output (confirmed in testing: the model can
+      // garble a large tool call into a single string field instead of the
+      // real JSON shape) — feed the validation error back as a tool_result
+      // so the model can self-correct in this same conversation, instead of
+      // throwing and forcing the Orchestrator to restart the whole agent
+      // from scratch on its next retry.
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: submitBlock.id,
+        content: `submit_findings input failed validation: ${parsed.error.message}. Re-read the schema and call submit_findings again with the corrected, complete JSON structure — every field must be the correct type (arrays are actual arrays, objects are actual objects, not strings).`,
+        is_error: true,
+      });
+      messages.push({ role: "user", content: toolResults });
+      continue;
+    }
+
+    if (toolUseBlocks.length === 0) {
+      messages.push({
+        role: "user",
+        content:
+          "Continue researching, or call submit_findings once you have enough data.",
+      });
+      continue;
+    }
+
     if (toolResults.length > 0) {
       messages.push({ role: "user", content: toolResults });
     }

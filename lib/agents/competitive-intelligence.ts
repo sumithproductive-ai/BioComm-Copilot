@@ -223,78 +223,22 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
     messages.push({ role: "assistant", content: response.content });
     for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
 
-    const submitBlock = response.content
-      .filter(isToolUseBlock)
-      .find((b) => b.name === "submit_findings");
-    if (submitBlock) {
-      const parsed = competitiveIntelligenceOutputSchema.safeParse(
-        backfillEmptyArrayFields(submitBlock.input)
-      );
-      if (parsed.success) {
-        const missing = findMissingReferenceCompetitors(parsed.data, input.indication);
-        const citationUrls = [
-          ...parsed.data.approvedCompetitors.map((c) => c.citation.sourceUrl),
-          ...parsed.data.lateStagePipeline.map((a) => a.citation.sourceUrl),
-        ];
-        const unverifiedUrls = findUnverifiedUrls(citationUrls, knownHostnames);
-        if (missing.length === 0 && unverifiedUrls.length === 0) return parsed.data;
-
-        const problems: string[] = [];
-        if (missing.length > 0) {
-          problems.push(
-            `approvedCompetitors is missing required reference-list drugs: ${missing.join(", ")} — every drug on that list must appear with a real citation, unless you have direct cited evidence it's been withdrawn (state that explicitly instead of omitting it)`
-          );
-        }
-        if (unverifiedUrls.length > 0) {
-          problems.push(
-            `these citation URLs were not seen in any real search_clinical_trials, search_sec_filings, or web_search result this conversation: ${unverifiedUrls.join(", ")} — never invent a source URL, search to confirm them or remove the unverifiable entries`
-          );
-        }
-        messages.push({
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: submitBlock.id,
-              content: `submit_findings input failed validation: ${problems.join("; ")}. Then call submit_findings again.`,
-              is_error: true,
-            },
-          ],
-        });
-        continue;
-      }
-      // Malformed structured output — confirmed in testing: with a larger
-      // schema (11+ competitors, each a full object), the model can garble
-      // a field into a string instead of the real JSON shape. Feed the
-      // validation error back so it can self-correct in this conversation
-      // instead of throwing and forcing a full restart on the next retry.
-      messages.push({
-        role: "user",
-        content: [
-          {
-            type: "tool_result",
-            tool_use_id: submitBlock.id,
-            content: `submit_findings input failed validation: ${parsed.error.message}. Re-read the schema and call submit_findings again with the corrected, complete JSON structure — every field must be the correct type (arrays are actual arrays, objects are actual objects, not strings).`,
-            is_error: true,
-          },
-        ],
-      });
-      continue;
-    }
-
     const toolUseBlocks = response.content.filter(isToolUseBlock);
+    const submitBlock = toolUseBlocks.find((b) => b.name === "submit_findings");
 
-    if (toolUseBlocks.length === 0) {
-      messages.push({
-        role: "user",
-        content:
-          "Continue researching, or call submit_findings once you have enough data.",
-      });
-      continue;
-    }
-
+    // Execute every non-submit_findings tool call in this response up front
+    // — needed even when submitBlock is also present and fails validation,
+    // since every tool_use block from this assistant turn needs a matching
+    // tool_result in the very next message or the next API call is rejected
+    // outright. Confirmed live (2026-10): "tool_use ids were found without
+    // tool_result blocks immediately after" when the model called
+    // submit_findings alongside a search tool in the same turn and
+    // submit_findings failed validation — the old code returned/continued
+    // right after handling submitBlock, silently dropping the sibling
+    // tool_use block's required response.
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of toolUseBlocks) {
+      if (block === submitBlock) continue;
       if (block.name === "search_clinical_trials") {
         const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
         const result = await searchClinicalTrials(
@@ -324,6 +268,64 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
       // web_search tool_use blocks are executed server-side by Anthropic —
       // their results are already in this same response, nothing to do here.
     }
+
+    if (submitBlock) {
+      const parsed = competitiveIntelligenceOutputSchema.safeParse(
+        backfillEmptyArrayFields(submitBlock.input)
+      );
+      if (parsed.success) {
+        const missing = findMissingReferenceCompetitors(parsed.data, input.indication);
+        const citationUrls = [
+          ...parsed.data.approvedCompetitors.map((c) => c.citation.sourceUrl),
+          ...parsed.data.lateStagePipeline.map((a) => a.citation.sourceUrl),
+        ];
+        const unverifiedUrls = findUnverifiedUrls(citationUrls, knownHostnames);
+        if (missing.length === 0 && unverifiedUrls.length === 0) return parsed.data;
+
+        const problems: string[] = [];
+        if (missing.length > 0) {
+          problems.push(
+            `approvedCompetitors is missing required reference-list drugs: ${missing.join(", ")} — every drug on that list must appear with a real citation, unless you have direct cited evidence it's been withdrawn (state that explicitly instead of omitting it)`
+          );
+        }
+        if (unverifiedUrls.length > 0) {
+          problems.push(
+            `these citation URLs were not seen in any real search_clinical_trials, search_sec_filings, or web_search result this conversation: ${unverifiedUrls.join(", ")} — never invent a source URL, search to confirm them or remove the unverifiable entries`
+          );
+        }
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: submitBlock.id,
+          content: `submit_findings input failed validation: ${problems.join("; ")}. Then call submit_findings again.`,
+          is_error: true,
+        });
+        messages.push({ role: "user", content: toolResults });
+        continue;
+      }
+      // Malformed structured output — confirmed in testing: with a larger
+      // schema (11+ competitors, each a full object), the model can garble
+      // a field into a string instead of the real JSON shape. Feed the
+      // validation error back so it can self-correct in this conversation
+      // instead of throwing and forcing a full restart on the next retry.
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: submitBlock.id,
+        content: `submit_findings input failed validation: ${parsed.error.message}. Re-read the schema and call submit_findings again with the corrected, complete JSON structure — every field must be the correct type (arrays are actual arrays, objects are actual objects, not strings).`,
+        is_error: true,
+      });
+      messages.push({ role: "user", content: toolResults });
+      continue;
+    }
+
+    if (toolUseBlocks.length === 0) {
+      messages.push({
+        role: "user",
+        content:
+          "Continue researching, or call submit_findings once you have enough data.",
+      });
+      continue;
+    }
+
     if (toolResults.length > 0) {
       messages.push({ role: "user", content: toolResults });
     }
