@@ -138,65 +138,22 @@ async function runFindingsLoop(
     messages.push({ role: "assistant", content: response.content });
     for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
 
-    const submitBlock = response.content
-      .filter(isToolUseBlock)
-      .find((b) => b.name === "submit_findings");
-    if (submitBlock) {
-      const parsed = commercialOpportunityOutputSchema.safeParse(
-        backfillEmptyArrayFields(submitBlock.input)
-      );
-      if (parsed.success) {
-        const citationUrls = [
-          ...(parsed.data.patientPopulationEstimate.citation
-            ? [parsed.data.patientPopulationEstimate.citation.sourceUrl]
-            : []),
-          ...parsed.data.unmetNeed.citations.map((c) => c.sourceUrl),
-        ];
-        const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
-        if (unverified.length === 0) return parsed.data;
-        messages.push({
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: submitBlock.id,
-              content: `submit_findings input failed validation: these citation URLs (in patientPopulationEstimate or unmetNeed) were not seen in any real search_pubmed or web_search result this conversation: ${unverified.join(", ")}. Never invent a source URL — search to confirm them or remove the unverifiable citations and call submit_findings again.`,
-              is_error: true,
-            },
-          ],
-        });
-        continue;
-      }
-      // Malformed structured output is a confirmed failure mode at scale on
-      // other agents in this codebase — safeParse and feed the error back
-      // so the model can self-correct within this conversation instead of
-      // throwing and forcing a full restart on the next Orchestrator retry.
-      messages.push({
-        role: "user",
-        content: [
-          {
-            type: "tool_result",
-            tool_use_id: submitBlock.id,
-            content: `submit_findings input failed validation: ${parsed.error.message}. Re-read the schema and call submit_findings again with the corrected, complete JSON structure — every field must be the correct type (arrays are actual arrays, objects are actual objects, not strings).`,
-            is_error: true,
-          },
-        ],
-      });
-      continue;
-    }
-
     const toolUseBlocks = response.content.filter(isToolUseBlock);
+    const submitBlock = toolUseBlocks.find((b) => b.name === "submit_findings");
 
-    if (toolUseBlocks.length === 0) {
-      messages.push({
-        role: "user",
-        content: "Continue researching, or call submit_findings once you have enough data.",
-      });
-      continue;
-    }
-
+    // Execute every non-submit_findings tool call in this response up front
+    // — needed even when submitBlock is also present and fails validation,
+    // since every tool_use block from this assistant turn needs a matching
+    // tool_result in the very next message or the next API call is rejected
+    // outright. Confirmed live (2026-10): "tool_use ids were found without
+    // tool_result blocks immediately after" when the model called
+    // submit_findings alongside a search tool in the same turn and
+    // submit_findings failed validation — the old code returned/continued
+    // right after handling submitBlock, silently dropping the sibling
+    // tool_use block's required response.
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of toolUseBlocks) {
+      if (block === submitBlock) continue;
       if (block.name === "search_pubmed") {
         const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
         const result = await searchPubmed(block.input as { query: string; maxResults?: number });
@@ -211,6 +168,51 @@ async function runFindingsLoop(
       // web_search tool_use blocks are executed server-side by Anthropic —
       // their results are already in this same response, nothing to do here.
     }
+
+    if (submitBlock) {
+      const parsed = commercialOpportunityOutputSchema.safeParse(
+        backfillEmptyArrayFields(submitBlock.input)
+      );
+      if (parsed.success) {
+        const citationUrls = [
+          ...(parsed.data.patientPopulationEstimate.citation
+            ? [parsed.data.patientPopulationEstimate.citation.sourceUrl]
+            : []),
+          ...parsed.data.unmetNeed.citations.map((c) => c.sourceUrl),
+        ];
+        const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
+        if (unverified.length === 0) return parsed.data;
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: submitBlock.id,
+          content: `submit_findings input failed validation: these citation URLs (in patientPopulationEstimate or unmetNeed) were not seen in any real search_pubmed or web_search result this conversation: ${unverified.join(", ")}. Never invent a source URL — search to confirm them or remove the unverifiable citations and call submit_findings again.`,
+          is_error: true,
+        });
+        messages.push({ role: "user", content: toolResults });
+        continue;
+      }
+      // Malformed structured output is a confirmed failure mode at scale on
+      // other agents in this codebase — safeParse and feed the error back
+      // so the model can self-correct within this conversation instead of
+      // throwing and forcing a full restart on the next Orchestrator retry.
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: submitBlock.id,
+        content: `submit_findings input failed validation: ${parsed.error.message}. Re-read the schema and call submit_findings again with the corrected, complete JSON structure — every field must be the correct type (arrays are actual arrays, objects are actual objects, not strings).`,
+        is_error: true,
+      });
+      messages.push({ role: "user", content: toolResults });
+      continue;
+    }
+
+    if (toolUseBlocks.length === 0) {
+      messages.push({
+        role: "user",
+        content: "Continue researching, or call submit_findings once you have enough data.",
+      });
+      continue;
+    }
+
     if (toolResults.length > 0) {
       messages.push({ role: "user", content: toolResults });
     }
