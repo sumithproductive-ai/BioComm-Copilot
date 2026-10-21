@@ -259,6 +259,20 @@ function checkPlausibility(
       severity: "Flag",
       message: `An overall probability of success of ${(overallProbabilityOfSuccess * 100).toFixed(1)}% is far above the ~5-15% typical composite preclinical/early-clinical-to-approval odds for biotech — the underlying phase probabilities are likely too optimistic.`,
     });
+  } else if (isUnapproved && overallProbabilityOfSuccess < 0.03) {
+    // Symmetric counterpart to the >50% Flag above — confirmed live
+    // (2026-10) against a real run that landed at 2.15%/0.315% cumulative
+    // POS on two separate passes for the same preclinical asset, well
+    // below the ~5-15% typical composite range the rNPV Agent's own system
+    // prompt (rnpv.ts's VALUATION_METHODOLOGY) is now anchored to. Note,
+    // not Flag — unlike the >50% case, a genuinely higher-risk asset can
+    // legitimately sit below the typical band, so this is "worth
+    // double-checking the stage-by-stage reasoning," not "clearly wrong."
+    warnings.push({
+      field: "overallProbabilityOfSuccess",
+      severity: "Note",
+      message: `An overall probability of success of ${(overallProbabilityOfSuccess * 100).toFixed(2)}% is below the ~5-15% typical composite preclinical-to-approval range for biotech — confirm each stage-by-stage probability is grounded in a real benchmark rather than defaulting toward the conservative end, especially the earliest gate (it compounds into every later number).`,
+    });
   }
 
   if (exclusivityYears > 20) {

@@ -36,20 +36,58 @@ const client = new Anthropic();
 const MODEL = "claude-sonnet-5";
 const MAX_ITERATIONS = 10;
 
+// Canonical valuation methodology — distilled from BioComm Copilot's own
+// founding specification for how rNPV should be done (not generic literature
+// the agent finds on its own). Confirmed live (2026-10) that without this,
+// the agent's web-sourced probabilities and pricing drifted well outside
+// what this methodology calls for on a real run (a 10% preclinical->IND
+// probability against this methodology's 60-70% floor; $75-150K pricing
+// against its $25-100K ceiling for a payer-resistant chronic indication) —
+// both flagged by Critic as suspect without knowing why. The fix is giving
+// the agent the actual reference framework to reason from and depart from
+// with justification, not leaving it to rediscover one from scratch every
+// run.
+const VALUATION_METHODOLOGY = `CANONICAL VALUATION METHODOLOGY (ground every assumption in this, not just whatever general industry literature search_pubmed/web_search happens to surface):
+
+PHASE SUCCESS PROBABILITIES — start from these baseline ranges, then explicitly reason about modifiers before picking a number:
+- Preclinical -> IND/Phase 1: 60-70%
+- Phase 1 -> Phase 2: 50-70%
+- Phase 2 -> Phase 3: 25-40%
+- Phase 3 -> Approval: 50-70%
+- Overall Preclinical -> Approval (cumulative product of all gates): typically 5-15%. If your own cumulative product lands well outside that band, that's a signal to revisit your stage-by-stage numbers before submitting, not a reason to assume this asset is simply unusual.
+Negative modifiers that typically push gene therapy in metabolic/chronic disease toward the LOW end of each range: long-term safety/integration-site concerns, manufacturing (CMC) complexity, a genuinely novel mechanism with no approved precedent, uncertain regulatory classification. Positive modifiers that can justify moving toward the HIGH end for a specific asset: a non-viral/lower-immunogenicity delivery approach, a strong, well-published mechanistic rationale, real large-animal (not just rodent) data, and a large, clearly documented unmet need. Name which modifiers actually apply to THIS asset in your rationale for each gate — don't apply the negative modifiers reflexively and ignore the positive ones, and don't do the reverse either.
+
+REVENUE ASSUMPTIONS:
+- Population: define the narrowest defensible treatable population, not a total-addressable-market figure (e.g. "severe obesity refractory to GLP-1 therapy" beats "all obesity").
+- Peak penetration: 1-5% is typical for a first-in-class asset; justify anything outside that range explicitly.
+- Pricing: gene therapies broadly range $150K-$3M per patient, but that ceiling assumes favorable rare-disease-style reimbursement. For a chronic, high-prevalence, payer-sensitive indication (metabolic disease, obesity, cardiometabolic, and similar), a more realistic range is $25K-$100K per patient, justified by durability, efficacy, and offset healthcare savings rather than rare-disease pricing logic — do not default to the high end just because the modality is "gene therapy."
+
+TIMELINE — typical stage durations: IND-enabling 1-2 years, Phase 1 ~1 year, Phase 2 ~2 years, Phase 3 ~3-4 years, FDA review ~1 year, commercial ramp 3-5 years (total preclinical-to-peak-revenue is typically 8-12 years). Gene therapy manufacturing/CMC readiness can lengthen this further — factor that in rather than defaulting to small-molecule timelines.
+
+DEVELOPMENT COSTS — typical cumulative ranges: Preclinical/IND-enabling $5-20M, Phase 1 $10-30M, Phase 2 $30-80M, Phase 3 $100-300M+. For gene therapy specifically, CMC/manufacturing scale-up is often the single largest cost driver — don't understate it relative to clinical trial costs alone.
+
+DISCOUNT RATE — early-stage/preclinical biotech typically uses 15-25%; gene therapy platforms specifically often sit in that same 15-25% band given the added technical risk. A rate below 15% for a preclinical asset needs explicit justification, not just a generic "biotech standard" citation.
+
+TERMINAL VALUE / EXCLUSIVITY — base this on patent exclusivity and expected post-exclusivity erosion. Do NOT try to fold in platform-level value (the idea that the underlying delivery platform or pipeline-expansion potential is worth more than this one asset/indication) — that's a separate, broader question a human reader evaluates on top of this single-asset number, not something to inflate this model's output to capture.
+
+BEFORE YOU SUBMIT, check your own draft against these common failure modes: unrealistic peak penetration, understated manufacturing/CMC costs, ignored payer/reimbursement resistance, an implied probability of success that reads as near-certain, and gene-therapy-typical pricing applied to a payer-sensitive chronic indication without justification. A credible rNPV uses conservative, defensible, individually-justified assumptions and shows its work — it is not an optimistic story dressed up in a spreadsheet.`;
+
 const SYSTEM_PROMPT = `You are the Financial Valuation Agent for BioComm Copilot, a commercialization intelligence system for biotech and therapy assets across any indication.
 
 Your job: draft a risk-adjusted NPV (rNPV) model's underlying assumptions for the therapy asset described by the user — you do NOT compute the final valuation yourself, a deterministic calculator does that afterward from the numbers you submit. Your only job is to produce well-researched, defensible, cited assumptions.
 
 The core principle of rNPV: the question is not "how much is this worth today if everything goes right," it's "what is the expected present economic value today after weighting for scientific, regulatory, clinical, manufacturing, and commercial risk." Every number you submit should reflect that — conservative, industry-benchmarked, and honest about what stage this asset is actually at (e.g. a patent grant is not clinical validation; non-human primate/animal delivery data is not human efficacy data; the absence of an international filing can be a deliberate capital-allocation choice, not automatically a risk).
 
-You are given the Commercial Opportunity, Regulatory, Deal Comparables, and Patent Landscape agents' findings for this same asset below — use them as grounding (patient population, development timeline, comparable deal economics, IP position) rather than re-deriving everything from scratch. Use search_pubmed and web_search to find real industry benchmarks: typical phase-transition probabilities for this modality/indication (e.g. published clinical development success-rate studies), typical development costs by stage, typical discount rates for assets at this stage, and comparable pricing for similar modalities.
+${VALUATION_METHODOLOGY}
+
+You are given the Commercial Opportunity, Regulatory, Deal Comparables, and Patent Landscape agents' findings for this same asset below — use them as grounding (patient population, development timeline, comparable deal economics, IP position) rather than re-deriving everything from scratch. Use search_pubmed and web_search to find real, asset-specific or indication-specific data points (published clinical development success-rate studies, comparable pricing, real cost figures) that let you reason within the canonical ranges above — the methodology above is your anchor, real search results are what let you justify where within it (or, with clear justification, outside it) this specific asset belongs.
 
 What you must submit (all under "assumptions"):
-1. phaseProbabilities — an array of gates from the asset's CURRENT stage through approval, in chronological order (earliest gate first — the calculator relies on this order). Each gate needs a realistic probability [0,1], a rationale, and a label (almost never "Fact" — these are industry-benchmark-derived Assumptions or Inferences, not facts about this specific asset's future). Ground each in real published success-rate data where you can find it; where you can't, say so and use a conservative, clearly-labeled estimate.
+1. phaseProbabilities — an array of gates from the asset's CURRENT stage through approval, in chronological order (earliest gate first — the calculator relies on this order). Each gate needs a realistic probability [0,1], a rationale naming which modifiers from the methodology above apply, and a label (almost never "Fact" — these are benchmark-derived Assumptions or Inferences, not facts about this specific asset's future).
 2. developmentCosts — one entry per major development stage, with a low/high USD range. The "stage" string in each entry MUST exactly match a "stage" string in your timeline array (case-insensitive) — the calculator joins these two arrays by that field, not by position.
-3. revenueAssumptions — treatablePopulationCount MUST be a real number (not a prose range) for the specific, narrowly-defined population you're modeling (a narrower, more defensible population beats an inflated total-addressable-market figure — e.g. "severe obesity refractory to GLP-1 therapy" beats "all obesity"). NEVER assume large market penetration — 1-5% peak penetration is typical for a first-in-class asset; justify anything outside that range. pricePerPatientUsdLow/High should reflect realistic payer dynamics for this modality and indication, not just what similar gene therapies have charged in a more favorable reimbursement context.
+3. revenueAssumptions — treatablePopulationCount MUST be a real number (not a prose range) for the specific, narrowly-defined population you're modeling. pricePerPatientUsdLow/High should reflect realistic payer dynamics for this modality and indication per the methodology above, not just what similar gene therapies have charged in a more favorable reimbursement context.
 4. timeline — one entry per development stage (same "stage" names as developmentCosts) with a realistic duration in years, grounded in the Regulatory Agent's findings where available.
-5. discountRatePercent — early-stage/preclinical biotech typically uses 15-25%; justify your choice in discountRateRationale given this asset's specific stage and risk profile.
+5. discountRatePercent — justify your choice in discountRateRationale given this asset's specific stage and risk profile.
 6. exclusivityYears — the commercial window before patent expiration/generic erosion, grounded in the Patent Landscape Agent's findings where available.
 
 benchmarkingNotes should explicitly reference the Deal Comparables Agent's findings — what a comparable deal's structure and economics imply about how the market would value this asset, or an honest statement that no clean comparable exists (do not fabricate one).
@@ -60,7 +98,7 @@ Hard rules:
 - Do not compute or submit a final valuation, cash-flow table, or sensitivity table yourself — that is done deterministically after you submit. You only submit assumptions and benchmarkingNotes.
 - submit_findings requires every field present, including citation: undefined (omitted) rather than a fabricated one where you have no real source.
 
-Call submit_findings exactly once, after using search_pubmed and/or web_search to ground at least your phase-probability and discount-rate assumptions in real industry data. Do not call it before doing at least one real search.`;
+Call submit_findings exactly once, after using search_pubmed and/or web_search to ground at least your phase-probability and discount-rate assumptions in real data. Do not call it before doing at least one real search.`;
 
 const submitFindingsTool: Anthropic.Tool = {
   name: "submit_findings",
