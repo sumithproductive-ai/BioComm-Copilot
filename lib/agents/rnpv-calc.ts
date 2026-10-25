@@ -239,11 +239,36 @@ function checkPlausibility(
     });
   }
 
-  if (isUnapproved && discountRatePercent < 10) {
+  // Catches a failure mode the penetration-rate check above can miss:
+  // treatablePopulationCount and peakPenetrationRateHigh can each look
+  // individually reasonable (e.g. a "broad but real" population x a
+  // textbook 1-5% penetration) while their product is still an implausible
+  // absolute patient count — confirmed live (2026-10) against a real run
+  // that combined a 15M-patient population with 2-3% penetration, implying
+  // ~300-450K patients/year treated at peak for a first-in-class,
+  // integrating-vector gene therapy, roughly 6-9x a real worked precedent
+  // for this same asset class (~50,000/year).
+  const impliedPeakPatients =
+    revenueAssumptions.treatablePopulationCount * revenueAssumptions.peakPenetrationRateHigh;
+  if (impliedPeakPatients > 200_000) {
+    warnings.push({
+      field: "treatablePopulationCount",
+      severity: "Note",
+      message: `treatablePopulationCount (${revenueAssumptions.treatablePopulationCount.toLocaleString()}) x peak penetration high end (${(revenueAssumptions.peakPenetrationRateHigh * 100).toFixed(1)}%) implies ~${Math.round(impliedPeakPatients).toLocaleString()} patients treated per year at peak — unusually large for a first-in-class asset. Each input can look individually reasonable while their product overstates absolute reach; confirm the population was narrowed to a specific defensible subgroup rather than a broad epidemiological total.`,
+    });
+  }
+
+  // Threshold updated (2026-10) alongside rnpv.ts's VALUATION_METHODOLOGY:
+  // a 10% rate is now the stated base case (technical/failure risk is
+  // captured by the phase-probability chain, not the discount rate — a
+  // blanket high rate on top of that double-counts risk), so this only
+  // flags a rate genuinely below any defensible floor, not merely below
+  // the old 15-25% guidance that this check used to enforce.
+  if (isUnapproved && discountRatePercent < 6) {
     warnings.push({
       field: "discountRatePercent",
       severity: "Flag",
-      message: `A ${discountRatePercent}% discount rate is unusually low for a ${stage} asset — industry practice applies 15-25% to clinical-stage biotech; a rate this low understates risk.`,
+      message: `A ${discountRatePercent}% discount rate is unusually low even for a risk-adjusted (rNPV) model for a ${stage} asset — biopharma rNPV surveys cite a median around 10%; a rate this low likely understates even time-value/commercial risk, separate from the technical risk already captured in the phase probabilities.`,
     });
   } else if (discountRatePercent > 35) {
     warnings.push({

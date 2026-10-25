@@ -38,39 +38,55 @@ const MAX_ITERATIONS = 10;
 
 // Canonical valuation methodology — distilled from BioComm Copilot's own
 // founding specification for how rNPV should be done (not generic literature
-// the agent finds on its own). Confirmed live (2026-10) that without this,
-// the agent's web-sourced probabilities and pricing drifted well outside
-// what this methodology calls for on a real run (a 10% preclinical->IND
-// probability against this methodology's 60-70% floor; $75-150K pricing
-// against its $25-100K ceiling for a payer-resistant chronic indication) —
-// both flagged by Critic as suspect without knowing why. The fix is giving
-// the agent the actual reference framework to reason from and depart from
-// with justification, not leaving it to rediscover one from scratch every
-// run.
+// the agent finds on its own). Section 1 is the general framework (applies
+// to any asset). Section 2 is a worked, company-commissioned precedent for
+// metabolic-disease/obesity gene therapy specifically — two prior rNPV
+// analyses of this exact asset class at two different stages (preclinical:
+// $60-70M; post-Phase-1-safety: $150-240M), included because they
+// deliberately depart from section 1's generic ranges in ways that are
+// better-reasoned for this asset class, not because they're wrong to
+// deviate. Confirmed live (2026-10) that without any of this, the agent's
+// web-sourced probabilities, pricing, and discount rate drifted well
+// outside what either section calls for (a 2.15% cumulative POS against a
+// ~5% precedent; an 18-22% discount rate stacked on top of an
+// already-low POS, double-counting risk the precedent explicitly warns
+// against) — flagged by Critic as suspect without knowing why.
 const VALUATION_METHODOLOGY = `CANONICAL VALUATION METHODOLOGY (ground every assumption in this, not just whatever general industry literature search_pubmed/web_search happens to surface):
+
+=== 1. GENERAL FRAMEWORK (any asset) ===
 
 PHASE SUCCESS PROBABILITIES — start from these baseline ranges, then explicitly reason about modifiers before picking a number:
 - Preclinical -> IND/Phase 1: 60-70%
 - Phase 1 -> Phase 2: 50-70%
 - Phase 2 -> Phase 3: 25-40%
 - Phase 3 -> Approval: 50-70%
-- Overall Preclinical -> Approval (cumulative product of all gates): typically 5-15%. If your own cumulative product lands well outside that band, that's a signal to revisit your stage-by-stage numbers before submitting, not a reason to assume this asset is simply unusual.
-Negative modifiers that typically push gene therapy in metabolic/chronic disease toward the LOW end of each range: long-term safety/integration-site concerns, manufacturing (CMC) complexity, a genuinely novel mechanism with no approved precedent, uncertain regulatory classification. Positive modifiers that can justify moving toward the HIGH end for a specific asset: a non-viral/lower-immunogenicity delivery approach, a strong, well-published mechanistic rationale, real large-animal (not just rodent) data, and a large, clearly documented unmet need. Name which modifiers actually apply to THIS asset in your rationale for each gate — don't apply the negative modifiers reflexively and ignore the positive ones, and don't do the reverse either.
+- Overall Preclinical -> Approval (cumulative product of all gates): typically 5-15%, though a genuinely high-risk combination (novel mechanism + a historically difficult indication) can reasonably land a bit below that, down to ~4-5% — see the worked precedent in section 2. If your own cumulative product falls well outside even that wider band, that's a signal to revisit your stage-by-stage numbers, not a reason to assume this asset is simply unusual.
+Negative modifiers that typically push toward the LOW end of each range: long-term safety/integration-site concerns, manufacturing (CMC) complexity, a genuinely novel mechanism with no approved precedent, uncertain regulatory classification, a historically high-attrition indication. Positive modifiers that can justify the HIGH end: a non-viral/lower-immunogenicity delivery approach, a strong, well-published mechanistic rationale, real large-animal (not just rodent) data, and a large, clearly documented unmet need. Name which modifiers actually apply to THIS asset in your rationale for each gate.
 
 REVENUE ASSUMPTIONS:
-- Population: define the narrowest defensible treatable population, not a total-addressable-market figure (e.g. "severe obesity refractory to GLP-1 therapy" beats "all obesity").
+- Population: define the narrowest defensible treatable population, not a total-addressable-market figure (e.g. "severe obesity refractory to GLP-1 therapy" beats "all obesity"). A population in the tens of millions is rarely defensible as a "treatable" figure for a first-in-class, non-oral/non-chronic-dosing asset — that's a total-addressable-market number wearing a treatable-population label.
 - Peak penetration: 1-5% is typical for a first-in-class asset; justify anything outside that range explicitly.
-- Pricing: gene therapies broadly range $150K-$3M per patient, but that ceiling assumes favorable rare-disease-style reimbursement. For a chronic, high-prevalence, payer-sensitive indication (metabolic disease, obesity, cardiometabolic, and similar), a more realistic range is $25K-$100K per patient, justified by durability, efficacy, and offset healthcare savings rather than rare-disease pricing logic — do not default to the high end just because the modality is "gene therapy."
+- Sanity-check the ARITHMETIC PRODUCT, not just each input in isolation: treatablePopulationCount x peak penetration = implied peak patients treated per year. A broad population (tens of millions) times an individually-"typical" 1-5% penetration still produces an unrealistic absolute patient count and peak revenue — two individually-plausible-looking numbers can multiply into an implausible one. See section 2 for a worked peak-patients figure to sanity-check against for this indication class.
+- Pricing: gene therapies broadly range $150K-$3M per patient, but that ceiling assumes favorable rare-disease-style reimbursement. For a chronic, high-prevalence, payer-sensitive indication (metabolic disease, obesity, cardiometabolic, and similar), a more realistic range is $25K-$100K per patient — see section 2 for a more specific worked figure.
 
-TIMELINE — typical stage durations: IND-enabling 1-2 years, Phase 1 ~1 year, Phase 2 ~2 years, Phase 3 ~3-4 years, FDA review ~1 year, commercial ramp 3-5 years (total preclinical-to-peak-revenue is typically 8-12 years). Gene therapy manufacturing/CMC readiness can lengthen this further — factor that in rather than defaulting to small-molecule timelines.
+TIMELINE — typical stage durations: IND-enabling 1-2 years, Phase 1 ~1 year, Phase 2 ~2 years, Phase 3 ~3-4 years, FDA review ~1 year, commercial ramp 3-5 years (total preclinical-to-peak-revenue is typically 8-12 years). Gene therapy manufacturing/CMC readiness can lengthen this further.
 
-DEVELOPMENT COSTS — typical cumulative ranges: Preclinical/IND-enabling $5-20M, Phase 1 $10-30M, Phase 2 $30-80M, Phase 3 $100-300M+. For gene therapy specifically, CMC/manufacturing scale-up is often the single largest cost driver — don't understate it relative to clinical trial costs alone.
+DEVELOPMENT COSTS — typical cumulative ranges: Preclinical/IND-enabling $5-20M, Phase 1 $10-30M, Phase 2 $30-80M, Phase 3 $100-300M+. CMC/manufacturing scale-up is often the single largest gene-therapy-specific cost driver.
 
-DISCOUNT RATE — early-stage/preclinical biotech typically uses 15-25%; gene therapy platforms specifically often sit in that same 15-25% band given the added technical risk. A rate below 15% for a preclinical asset needs explicit justification, not just a generic "biotech standard" citation.
+DISCOUNT RATE — use 10% as the base case for a risk-adjusted biopharma asset (median rate in large-biopharma rNPV surveys for R&D project valuation). This is deliberately lower than a plain-NPV "high discount rate for early biotech" instinct (12-25% is common advice for unadjusted NPV) — in an rNPV model, technical/failure risk is ALREADY fully captured by the phase-probability chain above, so inflating the discount rate on top of that double-counts risk and silently crushes the valuation. Only move above 10-12% for a reason distinct from clinical/technical risk — e.g. a specific company-level capital-structure or financing-risk factor — and say so explicitly in discountRateRationale. Do not cite "gene therapy is risky" alone as justification for a high rate; that risk belongs in the probabilities, not here.
 
-TERMINAL VALUE / EXCLUSIVITY — base this on patent exclusivity and expected post-exclusivity erosion. Do NOT try to fold in platform-level value (the idea that the underlying delivery platform or pipeline-expansion potential is worth more than this one asset/indication) — that's a separate, broader question a human reader evaluates on top of this single-asset number, not something to inflate this model's output to capture.
+TERMINAL VALUE / EXCLUSIVITY — base this on patent exclusivity and expected post-exclusivity erosion (roughly 8-12 years of significant post-launch sales is a typical range). Do NOT fold in platform-level value (the idea that the underlying delivery platform or pipeline-expansion potential is worth more than this one asset/indication) — that's a separate question a human reader evaluates on top of this single-asset number.
 
-BEFORE YOU SUBMIT, check your own draft against these common failure modes: unrealistic peak penetration, understated manufacturing/CMC costs, ignored payer/reimbursement resistance, an implied probability of success that reads as near-certain, and gene-therapy-typical pricing applied to a payer-sensitive chronic indication without justification. A credible rNPV uses conservative, defensible, individually-justified assumptions and shows its work — it is not an optimistic story dressed up in a spreadsheet.`;
+=== 2. INTERNAL METHODOLOGY PRECEDENT: metabolic-disease / obesity gene therapy ===
+BioComm Copilot's own internal valuation methodology includes two prior rNPV analyses of a real asset in this exact class (UTMD-delivered, non-viral, multi-gene thermogenic/metabolic mechanism) at two different stages, maintained as calibration reference — not an external published study, deal, or search result. Use these as a calibration anchor whenever the current asset's modality or indication overlaps (gene/cell therapy for obesity, metabolic disease, or a similar energy-expenditure/adiposity mechanism) — not as a lookup table to copy verbatim, but as evidence that these specific numbers are independently defensible for this risk class. IMPORTANT — how to cite this in your output: this is internal methodology, not a search_pubmed/web_search result, so NEVER attach a citation field to an assumption grounded in it, and phrase the rationale as "consistent with BioComm Copilot's internal valuation methodology for this asset class" rather than naming it like an external study (e.g. do not call it a "worked precedent study" or imply it was found via search) — a downstream reviewer should read it as documented internal practice, not as an unverified external claim.
+
+At PRECLINICAL stage (no human dosing yet): Preclinical->IND 50%, Phase1->Phase2 60%, Phase2->Phase3 30%, Phase3->Approval 60%, Approval->Launch 85% (cumulative ~4-5%). Discount rate 10%. Peak annual sales $1.5-2.0B; ~50,000 patients/year treated at peak. Work this backward when setting your own population/penetration: pick treatablePopulationCount and peakPenetrationRateHigh so their PRODUCT lands near 50,000, not just so each number individually "looks typical" — e.g. a population of ~1-1.5 million (a tightly-defined subgroup such as severe-obesity-refractory-to-or-intolerant-of-GLP-1 therapy, not all GLP-1-inadequate-responders broadly) at ~3-4% peak penetration gets you there; a population above ~2 million at "typical" 1-5% penetration will overshoot this precedent even though neither number looks wrong in isolation. Price ~$30-40K/patient. Dev costs: Preclinical ~$5M, Phase1 ~$5-10M, Phase2 ~$20-30M, Phase3 ~$200-250M. Resulting rNPV: ~$60-70M.
+
+At POST-PHASE-1-SAFETY stage (Phase 1 initiated/complete, no efficacy data yet): Phase1->Phase2 60%, Phase2->Phase3 35%, Phase3->Filing 60%, Filing->Approval 85% (cumulative ~10-11% from this point). Discount rate still 10% (unchanged from the preclinical analysis — de-risking shows up in the probabilities and reduced remaining years, not in a lower rate). Peak annual sales $1.8-3.0B. Dev costs remaining: Phase1 ~$5-10M, Phase2 ~$25-40M, Phase3 ~$200-300M, regulatory/commercial prep ~$30-50M. Resulting rNPV: ~$150-240M.
+
+Real comparable deals worth searching for directly (do not assert these without verifying via web_search — search for them by name): Novo Nordisk's 2025 licensing of Lexicon's LX9851 (preclinical small-molecule obesity asset, ~$75M upfront/near-term payments), Pfizer's 2019 option/equity deal with Vivet Therapeutics (preclinical non-viral gene therapy for a metabolic liver disease, ~$51M upfront, ~$686M total potential), Eli Lilly's 2024 deal with Haya Therapeutics (preclinical lncRNA obesity platform, up to $1B in milestones), AbbVie's 2023 deal with Gubra (Phase 1 amylin analog for obesity, $350M upfront), and Novo Nordisk's 2023 acquisition of Inversago Pharma (CB1 program, up to $1.075B). These establish that preclinical-to-Phase-1 metabolic-disease assets typically see $25-100M upfronts with $500M-1B+ total deal value when milestones are included — useful for benchmarkingNotes even when no exact-mechanism match exists.
+
+BEFORE YOU SUBMIT, check your own draft against these common failure modes: unrealistic peak penetration, understated manufacturing/CMC costs, ignored payer/reimbursement resistance, an implied probability of success that reads as near-certain, a discount rate that double-counts risk already captured by your phase probabilities, and gene-therapy-typical pricing applied to a payer-sensitive chronic indication without justification. A credible rNPV uses conservative, defensible, individually-justified assumptions and shows its work — it is not an optimistic story dressed up in a spreadsheet.`;
 
 const SYSTEM_PROMPT = `You are the Financial Valuation Agent for BioComm Copilot, a commercialization intelligence system for biotech and therapy assets across any indication.
 
