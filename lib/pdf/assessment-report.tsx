@@ -529,7 +529,56 @@ export function AssessmentReportDocument({
                 <CitationLine citation={p.citation ?? null} />
               </View>
             ))}
-            <View style={{ marginTop: 4 }}>
+            <Text style={[styles.subheading, { marginTop: 10 }]}>Revenue assumptions</Text>
+            <View style={styles.card} wrap={false}>
+              <Text style={[styles.body, { fontWeight: 700, color: COLORS.navy }]}>
+                {rnpv.assumptions.revenueAssumptions.treatablePopulationCount.toLocaleString()} patients —{" "}
+                {rnpv.assumptions.revenueAssumptions.treatablePopulationDescription}
+              </Text>
+              <Text style={styles.body}>
+                Peak penetration: {(rnpv.assumptions.revenueAssumptions.peakPenetrationRateLow * 100).toFixed(1)}%–
+                {(rnpv.assumptions.revenueAssumptions.peakPenetrationRateHigh * 100).toFixed(1)}% · Price per
+                patient: {formatUsd(rnpv.assumptions.revenueAssumptions.pricePerPatientUsdLow)}–
+                {formatUsd(rnpv.assumptions.revenueAssumptions.pricePerPatientUsdHigh)} · Years to peak sales:{" "}
+                {rnpv.assumptions.revenueAssumptions.yearsToPeakSales}
+              </Text>
+              {rnpv.assumptions.revenueAssumptions.rationale && (
+                <Text style={styles.body}>{rnpv.assumptions.revenueAssumptions.rationale}</Text>
+              )}
+              <CitationLine citation={rnpv.assumptions.revenueAssumptions.citation ?? null} />
+              <CitationLine citation={rnpv.assumptions.revenueAssumptions.treatablePopulationCitation ?? null} />
+            </View>
+
+            <Text style={[styles.subheading, { marginTop: 6 }]}>Development costs &amp; timeline</Text>
+            {rnpv.assumptions.timeline.map((stage, i) => {
+              const cost = rnpv.assumptions.developmentCosts.find(
+                (c) => c.stage.toLowerCase().trim() === stage.stage.toLowerCase().trim()
+              );
+              return (
+                <View key={i} style={styles.card} wrap={false}>
+                  <View style={styles.row}>
+                    <Text style={[styles.body, { fontWeight: 700, color: COLORS.navy }]}>{stage.stage}</Text>
+                    <Text style={styles.muted}>
+                      {stage.durationYears} year{stage.durationYears === 1 ? "" : "s"}
+                    </Text>
+                  </View>
+                  {cost && (
+                    <Text style={styles.body}>
+                      Estimated cost: {formatUsd(cost.lowUsd)}–{formatUsd(cost.highUsd)}
+                    </Text>
+                  )}
+                  {cost?.rationale && <Text style={styles.body}>{cost.rationale}</Text>}
+                  {stage.rationale && <Text style={styles.body}>{stage.rationale}</Text>}
+                </View>
+              );
+            })}
+            <Text style={[styles.body, { marginTop: 4 }]}>
+              Discount rate: {rnpv.assumptions.discountRatePercent}% — {rnpv.assumptions.discountRateRationale} ·
+              Exclusivity: {rnpv.assumptions.exclusivityYears} years
+              {rnpv.assumptions.exclusivityYearsRationale ? ` — ${rnpv.assumptions.exclusivityYearsRationale}` : ""}
+            </Text>
+
+            <View style={{ marginTop: 10 }}>
               <View style={styles.row}>
                 <Text style={styles.subheading}>Benchmarking</Text>
                 <ClaimTag label={rnpv.benchmarkingNotes.label} />

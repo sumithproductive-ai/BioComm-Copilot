@@ -98,13 +98,13 @@ ${VALUATION_METHODOLOGY}
 
 You are given the Commercial Opportunity, Regulatory, Deal Comparables, and Patent Landscape agents' findings for this same asset below — use them as grounding (patient population, development timeline, comparable deal economics, IP position) rather than re-deriving everything from scratch. Use search_pubmed and web_search to find real, asset-specific or indication-specific data points (published clinical development success-rate studies, comparable pricing, real cost figures) that let you reason within the canonical ranges above — the methodology above is your anchor, real search results are what let you justify where within it (or, with clear justification, outside it) this specific asset belongs.
 
-What you must submit (all under "assumptions"):
+What you must submit (all under "assumptions"). EVERY entry listed below needs its own "rationale" field — an analyst reviewing this memo must be able to see WHY each number was chosen without re-deriving it themselves. Never leave rationale as a placeholder or restate the number itself; name the actual reasoning (which modifiers apply, which benchmark/precedent you're anchoring to, why this asset departs from or matches it):
 1. phaseProbabilities — an array of gates from the asset's CURRENT stage through approval, in chronological order (earliest gate first — the calculator relies on this order). Each gate needs a realistic probability [0,1], a rationale naming which modifiers from the methodology above apply, and a label (almost never "Fact" — these are benchmark-derived Assumptions or Inferences, not facts about this specific asset's future).
-2. developmentCosts — one entry per major development stage, with a low/high USD range. The "stage" string in each entry MUST exactly match a "stage" string in your timeline array (case-insensitive) — the calculator joins these two arrays by that field, not by position.
-3. revenueAssumptions — treatablePopulationCount MUST be a real number (not a prose range) for the specific, narrowly-defined population you're modeling. pricePerPatientUsdLow/High should reflect realistic payer dynamics for this modality and indication per the methodology above, not just what similar gene therapies have charged in a more favorable reimbursement context.
-4. timeline — one entry per development stage (same "stage" names as developmentCosts) with a realistic duration in years, grounded in the Regulatory Agent's findings where available.
+2. developmentCosts — one entry per major development stage, with a low/high USD range and a rationale (what's driving the cost at this stage — trial size, CMC complexity, comparable program costs, etc.). The "stage" string in each entry MUST exactly match a "stage" string in your timeline array (case-insensitive) — the calculator joins these two arrays by that field, not by position.
+3. revenueAssumptions — treatablePopulationCount MUST be a real number (not a prose range) for the specific, narrowly-defined population you're modeling. pricePerPatientUsdLow/High should reflect realistic payer dynamics for this modality and indication per the methodology above, not just what similar gene therapies have charged in a more favorable reimbursement context. Include ONE rationale covering population sizing, penetration, pricing, and ramp timing together as a connected argument, not four disconnected numbers.
+4. timeline — one entry per development stage (same "stage" names as developmentCosts) with a realistic duration in years and a rationale, grounded in the Regulatory Agent's findings where available.
 5. discountRatePercent — justify your choice in discountRateRationale given this asset's specific stage and risk profile.
-6. exclusivityYears — the commercial window before patent expiration/generic erosion, grounded in the Patent Landscape Agent's findings where available.
+6. exclusivityYears — the commercial window before patent expiration/generic erosion, grounded in the Patent Landscape Agent's findings where available. Justify your choice in exclusivityYearsRationale (patent term, filing date, any extension/exclusivity considerations).
 
 benchmarkingNotes should explicitly reference the Deal Comparables Agent's findings — what a comparable deal's structure and economics imply about how the market would value this asset, or an honest statement that no clean comparable exists (do not fabricate one).
 
@@ -213,10 +213,10 @@ function mockFinancialAssumptions(): FinancialAssumptions {
       { fromStage: "Phase 3", toStage: "Approval", probability: 0.35, label: "Assumption", rationale: "[MOCK] placeholder." },
     ],
     developmentCosts: [
-      { stage: "Preclinical", lowUsd: 5_000_000, highUsd: 10_000_000, label: "Assumption" },
-      { stage: "Phase 1", lowUsd: 10_000_000, highUsd: 20_000_000, label: "Assumption" },
-      { stage: "Phase 2", lowUsd: 20_000_000, highUsd: 40_000_000, label: "Assumption" },
-      { stage: "Phase 3", lowUsd: 50_000_000, highUsd: 100_000_000, label: "Assumption" },
+      { stage: "Preclinical", lowUsd: 5_000_000, highUsd: 10_000_000, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { stage: "Phase 1", lowUsd: 10_000_000, highUsd: 20_000_000, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { stage: "Phase 2", lowUsd: 20_000_000, highUsd: 40_000_000, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { stage: "Phase 3", lowUsd: 50_000_000, highUsd: 100_000_000, label: "Assumption", rationale: "[MOCK] placeholder." },
     ],
     revenueAssumptions: {
       treatablePopulationCount: 500_000,
@@ -227,17 +227,19 @@ function mockFinancialAssumptions(): FinancialAssumptions {
       pricePerPatientUsdLow: 50_000,
       pricePerPatientUsdHigh: 100_000,
       yearsToPeakSales: 4,
+      rationale: "[MOCK] placeholder.",
       label: "Assumption",
     },
     timeline: [
-      { stage: "Preclinical", durationYears: 2, label: "Assumption" },
-      { stage: "Phase 1", durationYears: 1.5, label: "Assumption" },
-      { stage: "Phase 2", durationYears: 2, label: "Assumption" },
-      { stage: "Phase 3", durationYears: 3, label: "Assumption" },
+      { stage: "Preclinical", durationYears: 2, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { stage: "Phase 1", durationYears: 1.5, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { stage: "Phase 2", durationYears: 2, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { stage: "Phase 3", durationYears: 3, label: "Assumption", rationale: "[MOCK] placeholder." },
     ],
     discountRatePercent: 18,
     discountRateRationale: "[MOCK] placeholder discount rate for test mode.",
     exclusivityYears: 10,
+    exclusivityYearsRationale: "[MOCK] placeholder.",
   };
 }
 

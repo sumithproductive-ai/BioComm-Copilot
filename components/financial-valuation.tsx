@@ -189,6 +189,9 @@ export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
             {formatUsd(assumptions.revenueAssumptions.pricePerPatientUsdHigh)} · Years to peak sales:{" "}
             {assumptions.revenueAssumptions.yearsToPeakSales}
           </p>
+          {assumptions.revenueAssumptions.rationale && (
+            <p className="mt-1.5 text-sm text-foreground">{assumptions.revenueAssumptions.rationale}</p>
+          )}
           <div className="mt-1.5 flex items-center gap-2">
             <ClaimLabelBadge label={assumptions.revenueAssumptions.label} />
             <CitationLink citation={assumptions.revenueAssumptions.citation} />
@@ -219,6 +222,8 @@ export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
                     Estimated cost: {formatUsd(cost.lowUsd)}–{formatUsd(cost.highUsd)}
                   </p>
                 )}
+                {cost?.rationale && <p className="mt-1 text-sm text-foreground">{cost.rationale}</p>}
+                {stage.rationale && <p className="mt-1 text-sm text-foreground">{stage.rationale}</p>}
                 <div className="mt-1.5 flex items-center gap-2">
                   <ClaimLabelBadge label={stage.label} />
                   <CitationLink citation={stage.citation} />
@@ -230,6 +235,7 @@ export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
         <p className="mt-2 text-xs text-muted-foreground">
           Discount rate: {assumptions.discountRatePercent}% — {assumptions.discountRateRationale} ·
           Exclusivity: {assumptions.exclusivityYears} years
+          {assumptions.exclusivityYearsRationale ? ` — ${assumptions.exclusivityYearsRationale}` : ""}
         </p>
       </div>
 

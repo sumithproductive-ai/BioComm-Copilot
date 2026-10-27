@@ -324,6 +324,10 @@ export const developmentCostEstimateSchema = z.object({
   stage: z.string(),
   lowUsd: z.number().nonnegative(),
   highUsd: z.number().nonnegative(),
+  // Optional (not required) so memos persisted before this field existed
+  // still parse — see rnpvOutputSchema's comment. The rNPV Agent's prompt
+  // requires it for every new run regardless.
+  rationale: z.string().optional(),
   label: claimLabelSchema,
   citation: citationRefSchema.optional(),
 });
@@ -341,6 +345,11 @@ export const revenueAssumptionsSchema = z.object({
   pricePerPatientUsdLow: z.number().nonnegative(),
   pricePerPatientUsdHigh: z.number().nonnegative(),
   yearsToPeakSales: z.number().positive(),
+  // One combined rationale covering population sizing, penetration, pricing,
+  // and ramp timing together — an analyst reads these as one connected
+  // argument, not four isolated numbers. Optional for the same
+  // backward-compatibility reason as developmentCostEstimateSchema's.
+  rationale: z.string().optional(),
   label: claimLabelSchema,
   citation: citationRefSchema.optional(),
 });
@@ -348,6 +357,7 @@ export const revenueAssumptionsSchema = z.object({
 export const timelineStageSchema = z.object({
   stage: z.string(), // must match a developmentCosts[].stage entry to carry cost — see comment there
   durationYears: z.number().positive(),
+  rationale: z.string().optional(),
   label: claimLabelSchema,
   citation: citationRefSchema.optional(),
 });
@@ -360,6 +370,7 @@ export const financialAssumptionsSchema = z.object({
   discountRatePercent: z.number().min(0).max(100),
   discountRateRationale: z.string(),
   exclusivityYears: z.number().positive(),
+  exclusivityYearsRationale: z.string().optional(),
 });
 export type FinancialAssumptions = z.infer<typeof financialAssumptionsSchema>;
 

@@ -349,6 +349,10 @@ export function applyFinancialAssumptionsOverride(
         ? "User-provided discount rate."
         : assumptions.discountRateRationale,
     exclusivityYears: override.exclusivityYears ?? assumptions.exclusivityYears,
+    exclusivityYearsRationale:
+      override.exclusivityYears !== undefined
+        ? "User-provided exclusivity estimate."
+        : assumptions.exclusivityYearsRationale,
   };
 }
 
