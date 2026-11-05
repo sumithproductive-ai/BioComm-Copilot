@@ -15,9 +15,10 @@ import {
   findMissingReferenceCompetitors as findMissingReferenceCompetitorsByName,
   isUcRelatedIndication,
 } from "@/lib/config/uc-competitors";
-import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { SourceLedger } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
+import { isMockAgentsEnabled } from "./mock-mode";
 
 const client = new Anthropic();
 
@@ -140,15 +141,22 @@ export async function runCompetitiveIntelligenceAgent(
   input: CompetitiveIntelligenceInput,
   parentSpan?: LangfuseSpanClient
 ): Promise<CompetitiveIntelligenceOutput> {
+  if (isMockAgentsEnabled()) {
+    return competitiveIntelligenceOutputSchema.parse({
+      approvedCompetitors: [],
+      lateStagePipeline: [],
+      positioningGaps: [
+        { description: "[MOCK] Test mode — no real research performed (MOCK_AGENTS_FOR_LOCAL_TEST).", label: "Unknown" },
+      ],
+    });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   const systemPrompt = buildSystemPrompt(input.indication);
 
-  // Provenance tracking for approvedCompetitors/lateStagePipeline citations
-  // — same idea as Clinical Research's realNctIds, hostname-level since
-  // these are arbitrary URLs, not compact exact IDs. Seeded with
-  // clinicaltrials.gov or www.sec.gov whenever that structured tool actually
-  // returns results, plus every real web_search result hostname.
-  const knownHostnames = new Set<string>();
+  // Citations must match a page seen in a tool or web_search result this run
+  // (see SourceLedger).
+  const sources = new SourceLedger();
 
   const messages: Anthropic.MessageParam[] = [
     {
@@ -210,11 +218,54 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
     });
 
     messages.push({ role: "assistant", content: response.content });
-    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
+    sources.addWebSearchResults(response.content);
 
-    const submitBlock = response.content
-      .filter(isToolUseBlock)
-      .find((b) => b.name === "submit_findings");
+    const toolUseBlocks = response.content.filter(isToolUseBlock);
+    const submitBlock = toolUseBlocks.find((b) => b.name === "submit_findings");
+
+    // Execute every non-submit_findings tool call in this response up front
+    // — needed even when submitBlock is also present and fails validation,
+    // since every tool_use block from this assistant turn needs a matching
+    // tool_result in the very next message or the next API call is rejected
+    // outright. Confirmed live (2026-10): "tool_use ids were found without
+    // tool_result blocks immediately after" when the model called
+    // submit_findings alongside a search tool in the same turn and
+    // submit_findings failed validation — the old code returned/continued
+    // right after handling submitBlock, silently dropping the sibling
+    // tool_use block's required response.
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const block of toolUseBlocks) {
+      if (block === submitBlock) continue;
+      if (block.name === "search_clinical_trials") {
+        const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
+        const result = await searchClinicalTrials(
+          block.input as { query: string; condition?: string; pageSize?: number }
+        );
+        sources.addToolResult(result);
+        toolSpan?.end({ output: result });
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: JSON.stringify(result),
+        });
+      }
+      if (block.name === "search_sec_filings") {
+        const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
+        const result = await searchSecFilings(
+          block.input as { query: string; entityName?: string; forms?: string; maxResults?: number }
+        );
+        sources.addToolResult(result);
+        toolSpan?.end({ output: result });
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: JSON.stringify(result),
+        });
+      }
+      // web_search tool_use blocks are executed server-side by Anthropic —
+      // their results are already in this same response, nothing to do here.
+    }
+
     if (submitBlock) {
       const parsed = competitiveIntelligenceOutputSchema.safeParse(
         backfillEmptyArrayFields(submitBlock.input)
@@ -225,7 +276,7 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
           ...parsed.data.approvedCompetitors.map((c) => c.citation.sourceUrl),
           ...parsed.data.lateStagePipeline.map((a) => a.citation.sourceUrl),
         ];
-        const unverifiedUrls = findUnverifiedUrls(citationUrls, knownHostnames);
+        const unverifiedUrls = sources.findUnverified(citationUrls);
         if (missing.length === 0 && unverifiedUrls.length === 0) return parsed.data;
 
         const problems: string[] = [];
@@ -239,17 +290,13 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
             `these citation URLs were not seen in any real search_clinical_trials, search_sec_filings, or web_search result this conversation: ${unverifiedUrls.join(", ")} — never invent a source URL, search to confirm them or remove the unverifiable entries`
           );
         }
-        messages.push({
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: submitBlock.id,
-              content: `submit_findings input failed validation: ${problems.join("; ")}. Then call submit_findings again.`,
-              is_error: true,
-            },
-          ],
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: submitBlock.id,
+          content: `submit_findings input failed validation: ${problems.join("; ")}. Then call submit_findings again.`,
+          is_error: true,
         });
+        messages.push({ role: "user", content: toolResults });
         continue;
       }
       // Malformed structured output — confirmed in testing: with a larger
@@ -257,21 +304,15 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
       // a field into a string instead of the real JSON shape. Feed the
       // validation error back so it can self-correct in this conversation
       // instead of throwing and forcing a full restart on the next retry.
-      messages.push({
-        role: "user",
-        content: [
-          {
-            type: "tool_result",
-            tool_use_id: submitBlock.id,
-            content: `submit_findings input failed validation: ${parsed.error.message}. Re-read the schema and call submit_findings again with the corrected, complete JSON structure — every field must be the correct type (arrays are actual arrays, objects are actual objects, not strings).`,
-            is_error: true,
-          },
-        ],
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: submitBlock.id,
+        content: `submit_findings input failed validation: ${parsed.error.message}. Re-read the schema and call submit_findings again with the corrected, complete JSON structure — every field must be the correct type (arrays are actual arrays, objects are actual objects, not strings).`,
+        is_error: true,
       });
+      messages.push({ role: "user", content: toolResults });
       continue;
     }
-
-    const toolUseBlocks = response.content.filter(isToolUseBlock);
 
     if (toolUseBlocks.length === 0) {
       messages.push({
@@ -282,37 +323,6 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
       continue;
     }
 
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const block of toolUseBlocks) {
-      if (block.name === "search_clinical_trials") {
-        const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
-        const result = await searchClinicalTrials(
-          block.input as { query: string; condition?: string; pageSize?: number }
-        );
-        if (result.length > 0) knownHostnames.add("clinicaltrials.gov");
-        toolSpan?.end({ output: result });
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: JSON.stringify(result),
-        });
-      }
-      if (block.name === "search_sec_filings") {
-        const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
-        const result = await searchSecFilings(
-          block.input as { query: string; entityName?: string; forms?: string; maxResults?: number }
-        );
-        if (result.length > 0) knownHostnames.add("www.sec.gov");
-        toolSpan?.end({ output: result });
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: JSON.stringify(result),
-        });
-      }
-      // web_search tool_use blocks are executed server-side by Anthropic —
-      // their results are already in this same response, nothing to do here.
-    }
     if (toolResults.length > 0) {
       messages.push({ role: "user", content: toolResults });
     }

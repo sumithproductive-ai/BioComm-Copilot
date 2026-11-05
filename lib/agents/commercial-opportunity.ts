@@ -10,9 +10,10 @@ import {
   type CompetitiveIntelligenceOutput,
 } from "./schemas";
 import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
-import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { SourceLedger } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
+import { isMockAgentsEnabled } from "./mock-mode";
 
 const client = new Anthropic();
 
@@ -92,13 +93,11 @@ async function runFindingsLoop(
   parentSpan: LangfuseSpanClient | undefined,
   spanPrefix: string
 ): Promise<CommercialOpportunityOutput> {
-  // Provenance tracking for patientPopulationEstimate/unmetNeed citations —
-  // same idea as Clinical Research's realNctIds, hostname-level since these
-  // are arbitrary URLs. Seeded with pubmed.ncbi.nlm.nih.gov whenever
-  // search_pubmed actually returns results, plus every real web_search
-  // result hostname. The reconciliation step afterward doesn't need this —
-  // it can't introduce new citations (marketCrowdingAssessment has none).
-  const knownHostnames = new Set<string>();
+  // Citations must match a page seen in a tool or web_search result this run
+  // (see SourceLedger).
+  // The reconciliation step afterward can't introduce new citations
+  // (marketCrowdingAssessment has none).
+  const sources = new SourceLedger();
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const isLastChance = i === MAX_ITERATIONS - 1;
@@ -135,11 +134,39 @@ async function runFindingsLoop(
     });
 
     messages.push({ role: "assistant", content: response.content });
-    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
+    sources.addWebSearchResults(response.content);
 
-    const submitBlock = response.content
-      .filter(isToolUseBlock)
-      .find((b) => b.name === "submit_findings");
+    const toolUseBlocks = response.content.filter(isToolUseBlock);
+    const submitBlock = toolUseBlocks.find((b) => b.name === "submit_findings");
+
+    // Execute every non-submit_findings tool call in this response up front
+    // — needed even when submitBlock is also present and fails validation,
+    // since every tool_use block from this assistant turn needs a matching
+    // tool_result in the very next message or the next API call is rejected
+    // outright. Confirmed live (2026-10): "tool_use ids were found without
+    // tool_result blocks immediately after" when the model called
+    // submit_findings alongside a search tool in the same turn and
+    // submit_findings failed validation — the old code returned/continued
+    // right after handling submitBlock, silently dropping the sibling
+    // tool_use block's required response.
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const block of toolUseBlocks) {
+      if (block === submitBlock) continue;
+      if (block.name === "search_pubmed") {
+        const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
+        const result = await searchPubmed(block.input as { query: string; maxResults?: number });
+        sources.addToolResult(result);
+        toolSpan?.end({ output: result });
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: JSON.stringify(result),
+        });
+      }
+      // web_search tool_use blocks are executed server-side by Anthropic —
+      // their results are already in this same response, nothing to do here.
+    }
+
     if (submitBlock) {
       const parsed = commercialOpportunityOutputSchema.safeParse(
         backfillEmptyArrayFields(submitBlock.input)
@@ -151,40 +178,30 @@ async function runFindingsLoop(
             : []),
           ...parsed.data.unmetNeed.citations.map((c) => c.sourceUrl),
         ];
-        const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
+        const unverified = sources.findUnverified(citationUrls);
         if (unverified.length === 0) return parsed.data;
-        messages.push({
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: submitBlock.id,
-              content: `submit_findings input failed validation: these citation URLs (in patientPopulationEstimate or unmetNeed) were not seen in any real search_pubmed or web_search result this conversation: ${unverified.join(", ")}. Never invent a source URL — search to confirm them or remove the unverifiable citations and call submit_findings again.`,
-              is_error: true,
-            },
-          ],
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: submitBlock.id,
+          content: `submit_findings input failed validation: these citation URLs (in patientPopulationEstimate or unmetNeed) were not seen in any real search_pubmed or web_search result this conversation: ${unverified.join(", ")}. Never invent a source URL — search to confirm them or remove the unverifiable citations and call submit_findings again.`,
+          is_error: true,
         });
+        messages.push({ role: "user", content: toolResults });
         continue;
       }
       // Malformed structured output is a confirmed failure mode at scale on
       // other agents in this codebase — safeParse and feed the error back
       // so the model can self-correct within this conversation instead of
       // throwing and forcing a full restart on the next Orchestrator retry.
-      messages.push({
-        role: "user",
-        content: [
-          {
-            type: "tool_result",
-            tool_use_id: submitBlock.id,
-            content: `submit_findings input failed validation: ${parsed.error.message}. Re-read the schema and call submit_findings again with the corrected, complete JSON structure — every field must be the correct type (arrays are actual arrays, objects are actual objects, not strings).`,
-            is_error: true,
-          },
-        ],
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: submitBlock.id,
+        content: `submit_findings input failed validation: ${parsed.error.message}. Re-read the schema and call submit_findings again with the corrected, complete JSON structure — every field must be the correct type (arrays are actual arrays, objects are actual objects, not strings).`,
+        is_error: true,
       });
+      messages.push({ role: "user", content: toolResults });
       continue;
     }
-
-    const toolUseBlocks = response.content.filter(isToolUseBlock);
 
     if (toolUseBlocks.length === 0) {
       messages.push({
@@ -194,22 +211,6 @@ async function runFindingsLoop(
       continue;
     }
 
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const block of toolUseBlocks) {
-      if (block.name === "search_pubmed") {
-        const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
-        const result = await searchPubmed(block.input as { query: string; maxResults?: number });
-        if (result.length > 0) knownHostnames.add("pubmed.ncbi.nlm.nih.gov");
-        toolSpan?.end({ output: result });
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: JSON.stringify(result),
-        });
-      }
-      // web_search tool_use blocks are executed server-side by Anthropic —
-      // their results are already in this same response, nothing to do here.
-    }
     if (toolResults.length > 0) {
       messages.push({ role: "user", content: toolResults });
     }
@@ -309,6 +310,18 @@ export async function runCommercialOpportunityAgent(
   parentSpan?: LangfuseSpanClient,
   competitiveOutput?: Promise<CompetitiveIntelligenceOutput | null>
 ): Promise<CommercialOpportunityOutput> {
+  if (isMockAgentsEnabled()) {
+    return commercialOpportunityOutputSchema.parse({
+      patientPopulationEstimate: {
+        value: "[MOCK] placeholder — no real research performed (MOCK_AGENTS_FOR_LOCAL_TEST)",
+        label: "Unknown",
+      },
+      unmetNeed: { summary: "[MOCK] Test mode.", citations: [] },
+      marketCrowdingAssessment: { summary: "[MOCK] Test mode.", consistentWithCompetitiveLandscape: true },
+      differentiationPotential: { summary: "[MOCK] Test mode.", label: "Unknown" },
+    });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
 
   const messages: Anthropic.MessageParam[] = [

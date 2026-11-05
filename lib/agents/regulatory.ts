@@ -6,9 +6,10 @@ import { z } from "zod";
 import type { LangfuseSpanClient } from "langfuse";
 import { regulatoryOutputSchema, type RegulatoryOutput } from "./schemas";
 import { UC_COMPETITOR_REFERENCE_LIST, isUcRelatedIndication } from "@/lib/config/uc-competitors";
-import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { SourceLedger } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
+import { isMockAgentsEnabled } from "./mock-mode";
 
 const client = new Anthropic();
 
@@ -105,12 +106,24 @@ export async function runRegulatoryAgent(
   input: RegulatoryInput,
   parentSpan?: LangfuseSpanClient
 ): Promise<RegulatoryOutput> {
+  if (isMockAgentsEnabled()) {
+    return regulatoryOutputSchema.parse({
+      guidanceDocuments: [],
+      endpointPrecedent: [],
+      priorApprovalsSameMechanism: [],
+      developmentTimelineEstimate: {
+        summary: "[MOCK] Test mode — no real research performed (MOCK_AGENTS_FOR_LOCAL_TEST).",
+        label: "Assumption",
+      },
+    });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   const systemPrompt = buildSystemPrompt(input.indication);
 
   // Same reasoning as Deal Comparables — no structured tool fallback here,
   // every citation is only as trustworthy as web_search itself.
-  const knownHostnames = new Set<string>();
+  const sources = new SourceLedger();
 
   const messages: Anthropic.MessageParam[] = [
     {
@@ -163,7 +176,7 @@ Today's date is ${today}. Use web_search to gather real data before calling subm
     });
 
     messages.push({ role: "assistant", content: response.content });
-    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
+    sources.addWebSearchResults(response.content);
 
     const submitBlock = response.content
       .filter(isToolUseBlock)
@@ -176,7 +189,7 @@ Today's date is ${today}. Use web_search to gather real data before calling subm
           ...parsed.data.endpointPrecedent.flatMap((p) => p.citations.map((c) => c.sourceUrl)),
           ...parsed.data.priorApprovalsSameMechanism.map((a) => a.citation.sourceUrl),
         ];
-        const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
+        const unverified = sources.findUnverified(citationUrls);
         if (unverified.length === 0) return parsed.data;
         messages.push({
           role: "user",

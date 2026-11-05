@@ -1,3 +1,5 @@
+import { DISCLAIMER_TEXT, NON_UC_SCOPE_TEXT } from "@/lib/memo-notices";
+import { isUcRelatedIndication } from "@/lib/config/uc-competitors";
 import { Document, Page, View, Text, StyleSheet, Svg, Rect, Link } from "@react-pdf/renderer";
 import type {
   ClinicalLandscape,
@@ -173,6 +175,8 @@ export function AssessmentReportDocument({
         <Text style={styles.subtitle}>
           {memoRun.modality} · {memoRun.stage} · {memoRun.indication}
         </Text>
+        <Text style={styles.muted}>{DISCLAIMER_TEXT}</Text>
+        {!isUcRelatedIndication(memoRun.indication) && <Text style={styles.muted}>{NON_UC_SCOPE_TEXT}</Text>}
         <Text style={[styles.muted, { marginTop: 2 }]}>
           Generated {generatedAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
         </Text>
@@ -187,7 +191,7 @@ export function AssessmentReportDocument({
                 <Text style={styles.statValue}>{summary.commercialOpportunity}</Text>
               </View>
               <View style={styles.statTile}>
-                <Text style={styles.statLabel}>Confidence</Text>
+                <Text style={styles.statLabel}>Evidence Coverage</Text>
                 <Text style={styles.statValue}>{Number(summary.confidenceScore).toFixed(1)}/10</Text>
               </View>
               <View style={styles.statTile}>
@@ -202,7 +206,7 @@ export function AssessmentReportDocument({
             <Text style={[styles.body, { marginTop: 8 }]}>
               Recommended next step: {NEXT_STEP_LABELS[summary.recommendedNextStep] ?? summary.recommendedNextStep}
             </Text>
-            <Text style={[styles.subheading, { marginTop: 10 }]}>Confidence score breakdown</Text>
+            <Text style={[styles.subheading, { marginTop: 10 }]}>Evidence Coverage breakdown</Text>
             <BarRow label="Clinical data" value={Number(summary.clinicalDataCompleteness)} max={1} color={COLORS.navy} />
             <BarRow label="Competitive" value={Number(summary.competitiveCoverageCompleteness)} max={1} color={COLORS.navy} />
             <BarRow label="Commercial" value={Number(summary.commercialSourceQuality)} max={1} color={COLORS.navy} />
@@ -467,6 +471,30 @@ export function AssessmentReportDocument({
           <>
             <SectionTitle>Financial Valuation (rNPV)</SectionTitle>
             <Text style={[styles.muted, { marginBottom: 6 }]}>{rnpv.methodologyNote}</Text>
+            {rnpv.providedOverride && rnpv.providedComputed && (
+              <View style={{ marginBottom: 8 }}>
+                <Text style={styles.subheading}>AI-estimated vs. provided assumptions</Text>
+                <View style={styles.row}>
+                  <View style={[styles.statTile, { width: "48%" }]}>
+                    <Text style={styles.statLabel}>AI-estimated</Text>
+                    <Text style={styles.statValue}>{formatUsd(rnpv.computed.totalRnpvUsd)}</Text>
+                    <Text style={[styles.muted, { marginTop: 2 }]}>
+                      POS {(rnpv.computed.overallProbabilityOfSuccess * 100).toFixed(2)}% · Discount{" "}
+                      {rnpv.assumptions.discountRatePercent}% · Exclusivity {rnpv.assumptions.exclusivityYears}y
+                    </Text>
+                  </View>
+                  <View style={[styles.statTile, { width: "48%", borderColor: COLORS.navy }]}>
+                    <Text style={styles.statLabel}>Your provided assumptions</Text>
+                    <Text style={styles.statValue}>{formatUsd(rnpv.providedComputed.totalRnpvUsd)}</Text>
+                    <Text style={[styles.muted, { marginTop: 2 }]}>
+                      POS {(rnpv.providedComputed.overallProbabilityOfSuccess * 100).toFixed(2)}% · Discount{" "}
+                      {rnpv.providedOverride.discountRatePercent ?? rnpv.assumptions.discountRatePercent}% ·
+                      Exclusivity {rnpv.providedOverride.exclusivityYears ?? rnpv.assumptions.exclusivityYears}y
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
             {rnpv.computed.plausibilityWarnings.map((warning, i) => (
               <View
                 key={i}
@@ -505,7 +533,56 @@ export function AssessmentReportDocument({
                 <CitationLine citation={p.citation ?? null} />
               </View>
             ))}
-            <View style={{ marginTop: 4 }}>
+            <Text style={[styles.subheading, { marginTop: 10 }]}>Revenue assumptions</Text>
+            <View style={styles.card} wrap={false}>
+              <Text style={[styles.body, { fontWeight: 700, color: COLORS.navy }]}>
+                {rnpv.assumptions.revenueAssumptions.treatablePopulationCount.toLocaleString()} patients —{" "}
+                {rnpv.assumptions.revenueAssumptions.treatablePopulationDescription}
+              </Text>
+              <Text style={styles.body}>
+                Peak penetration: {(rnpv.assumptions.revenueAssumptions.peakPenetrationRateLow * 100).toFixed(1)}%–
+                {(rnpv.assumptions.revenueAssumptions.peakPenetrationRateHigh * 100).toFixed(1)}% · Price per
+                patient: {formatUsd(rnpv.assumptions.revenueAssumptions.pricePerPatientUsdLow)}–
+                {formatUsd(rnpv.assumptions.revenueAssumptions.pricePerPatientUsdHigh)} · Years to peak sales:{" "}
+                {rnpv.assumptions.revenueAssumptions.yearsToPeakSales}
+              </Text>
+              {rnpv.assumptions.revenueAssumptions.rationale && (
+                <Text style={styles.body}>{rnpv.assumptions.revenueAssumptions.rationale}</Text>
+              )}
+              <CitationLine citation={rnpv.assumptions.revenueAssumptions.citation ?? null} />
+              <CitationLine citation={rnpv.assumptions.revenueAssumptions.treatablePopulationCitation ?? null} />
+            </View>
+
+            <Text style={[styles.subheading, { marginTop: 6 }]}>Development costs &amp; timeline</Text>
+            {rnpv.assumptions.timeline.map((stage, i) => {
+              const cost = rnpv.assumptions.developmentCosts.find(
+                (c) => c.stage.toLowerCase().trim() === stage.stage.toLowerCase().trim()
+              );
+              return (
+                <View key={i} style={styles.card} wrap={false}>
+                  <View style={styles.row}>
+                    <Text style={[styles.body, { fontWeight: 700, color: COLORS.navy }]}>{stage.stage}</Text>
+                    <Text style={styles.muted}>
+                      {stage.durationYears} year{stage.durationYears === 1 ? "" : "s"}
+                    </Text>
+                  </View>
+                  {cost && (
+                    <Text style={styles.body}>
+                      Estimated cost: {formatUsd(cost.lowUsd)}–{formatUsd(cost.highUsd)}
+                    </Text>
+                  )}
+                  {cost?.rationale && <Text style={styles.body}>{cost.rationale}</Text>}
+                  {stage.rationale && <Text style={styles.body}>{stage.rationale}</Text>}
+                </View>
+              );
+            })}
+            <Text style={[styles.body, { marginTop: 4 }]}>
+              Discount rate: {rnpv.assumptions.discountRatePercent}% — {rnpv.assumptions.discountRateRationale} ·
+              Exclusivity: {rnpv.assumptions.exclusivityYears} years
+              {rnpv.assumptions.exclusivityYearsRationale ? ` — ${rnpv.assumptions.exclusivityYearsRationale}` : ""}
+            </Text>
+
+            <View style={{ marginTop: 10 }}>
               <View style={styles.row}>
                 <Text style={styles.subheading}>Benchmarking</Text>
                 <ClaimTag label={rnpv.benchmarkingNotes.label} />

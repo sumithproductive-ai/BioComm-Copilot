@@ -25,6 +25,7 @@ import {
   findMissingReferenceCompetitors,
   isUcRelatedIndication,
 } from "@/lib/config/uc-competitors";
+import { isMockAgentsEnabled } from "./mock-mode";
 
 const client = new Anthropic();
 
@@ -138,6 +139,10 @@ function inverseCriticFlagSeverity(critic: CriticOutput | null): number {
 // example given is a target with zero published trials. That rule
 // overrides the confidence-score threshold below, so a data-gap run never
 // gets misread as a negative-signal "Do not pursue".
+//
+// The score measures evidence coverage, not asset quality, so a low score
+// means "gather more data" and never produces "Do not pursue". The enum value
+// stays only so memos saved before this change still render.
 function recommendedNextStep(
   clinical: ResearchOutputs["clinical"],
   confidenceScore: number
@@ -145,25 +150,29 @@ function recommendedNextStep(
   const coreSectionsEmpty = !clinical || clinical.trials.length === 0;
   if (coreSectionsEmpty) return "GatherMoreData";
   if (confidenceScore >= 7) return "ContinueDiligence";
-  if (confidenceScore >= 4) return "GatherMoreData";
-  return "DoNotPursue";
+  return "GatherMoreData";
 }
 
 // Not specified anywhere in AGENT_PLAN.md — a judgment call. Reflects
 // commercial promise specifically (differentiation + a sourced patient
 // population + no unresolved crowding contradiction), not overall data
 // quality — those are deliberately different axes from confidenceScore.
+// This rates how well the opportunity is evidenced, not market size: "High"
+// needs a cited population, cited unmet need, reasoned or sourced
+// differentiation (not a bare Assumption/Unknown) and no crowding contradiction.
 function commercialOpportunityRating(
   commercial: ResearchOutputs["commercial"]
 ): DecisionSummary["commercialOpportunity"] {
   if (!commercial || !commercial.patientPopulationEstimate.citation) return "Low";
-  const differentiated = commercial.differentiationPotential.label !== "Unknown";
+  const differentiationLabel = commercial.differentiationPotential.label;
+  const differentiated = differentiationLabel === "Fact" || differentiationLabel === "Inference";
+  const unmetNeedCited = commercial.unmetNeed.citations.length > 0;
   const notContradicted = commercial.marketCrowdingAssessment.consistentWithCompetitiveLandscape !== false;
-  if (differentiated && notContradicted) return "High";
+  if (differentiated && unmetNeedCited && notContradicted) return "High";
   return "Medium";
 }
 
-function computeDecisionSummary(
+export function computeDecisionSummary(
   researchOutputs: ResearchOutputs,
   critic: CriticOutput | null,
   keyRisksCount: number,
@@ -246,6 +255,21 @@ export async function runSynthesisAgent(
   parentSpan?: LangfuseSpanClient
 ): Promise<SynthesisOutput> {
   const today = new Date().toISOString().slice(0, 10);
+
+  if (isMockAgentsEnabled()) {
+    const keyRisks: z.infer<typeof keyRiskSchema>[] = [
+      { description: "[MOCK] Test mode — no real research performed (MOCK_AGENTS_FOR_LOCAL_TEST).", label: "Unknown" },
+    ];
+    const routeRecommendations: z.infer<typeof routeRecommendationSchema>[] = [
+      { description: "[MOCK] Unset MOCK_AGENTS_FOR_LOCAL_TEST and re-run for real findings.", label: "Assumption" },
+    ];
+    // Reuses the real, deterministic decision-summary formula above — only
+    // the LLM-drafted keyRisks/routeRecommendations are mocked, so the
+    // Confidence Score shown still reflects whatever real or mocked
+    // ResearchOutputs/CriticOutput this run actually produced.
+    const decisionSummary = computeDecisionSummary(input.researchOutputs, input.criticOutput, keyRisks.length, input.indication);
+    return synthesisOutputSchema.parse({ decisionSummary, keyRisks, routeRecommendations, asOfDate: today });
+  }
 
   const messages: Anthropic.MessageParam[] = [
     {

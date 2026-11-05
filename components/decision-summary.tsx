@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { ConfidenceBreakdownChart } from "@/components/confidence-breakdown-chart";
+import { EVIDENCE_COVERAGE_TEXT } from "@/lib/memo-notices";
 import type { DecisionSummaryRecord } from "@/lib/agents/persist";
 
 // USER_STORIES.md Story 3 AC: "Confidence Score derivation method is
@@ -137,7 +138,7 @@ export function DecisionSummarySection({ data }: { data: DecisionSummaryRecord }
             {summary.commercialOpportunity}
           </Badge>
         </StatTile>
-        <StatTile href="#reviewer-notes" label="Confidence Score">
+        <StatTile href="#reviewer-notes" label="Evidence Coverage">
           <span className="text-lg font-bold text-brand-navy">{confidenceScore.toFixed(1)}/10</span>
         </StatTile>
         <StatTile href="#key-risks" label="Key Risks">
@@ -162,7 +163,7 @@ export function DecisionSummarySection({ data }: { data: DecisionSummaryRecord }
 
       <details className="rounded-[9px] border border-border bg-white px-3 py-2">
         <summary className="cursor-pointer text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          How Confidence Score is calculated
+          How Evidence Coverage is calculated
         </summary>
         <div className="mt-2">
           <ConfidenceBreakdownChart
@@ -173,7 +174,7 @@ export function DecisionSummarySection({ data }: { data: DecisionSummaryRecord }
           />
           <p className="mt-2 text-xs text-muted-foreground">
             A rule-based weighted average, computed in code from the other agents&apos; already-validated
-            outputs — never an LLM-guessed number.
+            outputs — never an LLM-guessed number. {EVIDENCE_COVERAGE_TEXT}
           </p>
         </div>
       </details>

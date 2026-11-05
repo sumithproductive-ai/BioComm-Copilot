@@ -30,6 +30,7 @@ import { PatentLandscapeSection } from "@/components/patent-landscape";
 import { FinancialValuationSection } from "@/components/financial-valuation";
 import { ReviewerNotesSection } from "@/components/reviewer-notes";
 import { DecisionSummarySection } from "@/components/decision-summary";
+import { MemoScopeNotice } from "@/components/memo-scope-notice";
 import { KeyRisksSection, RouteRecommendationsSection } from "@/components/key-risks";
 import { SourceIndexSection } from "@/components/source-index";
 import { EpistemicLedgerSection } from "@/components/epistemic-ledger";
@@ -243,6 +244,7 @@ export default async function MemoRunPage({
                   Research Trace ↗
                 </a>
               )}
+              <MemoScopeNotice indication={memoRun.indication} />
               {hasDecisionSummary && (
                 <a
                   href={`/memo/${memoRun.id}/pdf`}

@@ -9,6 +9,8 @@ import { z } from "zod";
 import type { LangfuseSpanClient } from "langfuse";
 import { criticFlagSchema, criticOutputSchema, type CriticOutput, type ResearchOutputs } from "./schemas";
 import { UC_COMPETITOR_REFERENCE_LIST, isUcRelatedIndication } from "@/lib/config/uc-competitors";
+import { isMockAgentsEnabled } from "./mock-mode";
+import { findStaleTrialFlags } from "./stale-check";
 
 const client = new Anthropic();
 
@@ -144,6 +146,11 @@ export async function runCriticAgent(
   input: CriticInput,
   parentSpan?: LangfuseSpanClient
 ): Promise<CriticOutput> {
+  if (isMockAgentsEnabled()) {
+    const flags = findStaleTrialFlags(input.researchOutputs.clinical, []);
+    return criticOutputSchema.parse({ flags, hasCriticalFlags: flags.length > 0 });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   const systemPrompt = buildSystemPrompt(input.indication);
 
@@ -206,7 +213,11 @@ Run all 8 checks from your system prompt and call submit_findings with every fla
     if (submitBlock) {
       const parsed = criticSubmissionSchema.safeParse(submitBlock.input);
       if (parsed.success) {
-        const flags = dropSelfContradictingFlags(parsed.data.flags);
+        const modelFlags = dropSelfContradictingFlags(parsed.data.flags);
+        const flags = [
+          ...modelFlags,
+          ...findStaleTrialFlags(input.researchOutputs.clinical, modelFlags),
+        ];
         return criticOutputSchema.parse({
           flags,
           hasCriticalFlags: flags.length > 0,

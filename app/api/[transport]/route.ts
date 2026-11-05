@@ -164,7 +164,7 @@ const handler = createMcpHandler(
       {
         title: "Get a BioComm assessment's Decision Summary",
         description:
-          "Get just the executive-scan Decision Summary for one BioComm Copilot assessment by id — Commercial Opportunity rating, Confidence Score (with its component breakdown), Key Risks/Comparable Deals counts, and Recommended Next Step. Null until the Synthesis Agent has run.",
+          "Get just the executive-scan Decision Summary for one BioComm Copilot assessment by id — Commercial Opportunity rating, Evidence Coverage score (stored as confidenceScore, with its component breakdown), Key Risks/Comparable Deals counts, and Recommended Next Step. Null until the Synthesis Agent has run.",
         inputSchema: {
           memoRunId: z.string().uuid().describe("The assessment's id, from list_assessments or search_assessments_by_target"),
         },

@@ -17,16 +17,19 @@ import {
   rnpvSubmissionSchema,
   rnpvOutputSchema,
   type RnpvOutput,
+  type FinancialAssumptionsOverride,
   type CommercialOpportunityOutput,
   type RegulatoryOutput,
   type DealComparablesOutput,
   type PatentOutput,
 } from "./schemas";
-import { computeRnpv } from "./rnpv-calc";
+import { computeRnpv, applyFinancialAssumptionsOverride } from "./rnpv-calc";
 import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
-import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { SourceLedger } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
+import { isMockAgentsEnabled } from "./mock-mode";
+import type { FinancialAssumptions } from "./schemas";
 
 const client = new Anthropic();
 
@@ -41,13 +44,13 @@ The core principle of rNPV: the question is not "how much is this worth today if
 
 You are given the Commercial Opportunity, Regulatory, Deal Comparables, and Patent Landscape agents' findings for this same asset below — use them as grounding (patient population, development timeline, comparable deal economics, IP position) rather than re-deriving everything from scratch. Use search_pubmed and web_search to find real industry benchmarks: typical phase-transition probabilities for this modality/indication (e.g. published clinical development success-rate studies), typical development costs by stage, typical discount rates for assets at this stage, and comparable pricing for similar modalities.
 
-What you must submit (all under "assumptions"):
-1. phaseProbabilities — an array of gates from the asset's CURRENT stage through approval, in chronological order (earliest gate first — the calculator relies on this order). Each gate needs a realistic probability [0,1], a rationale, and a label (almost never "Fact" — these are industry-benchmark-derived Assumptions or Inferences, not facts about this specific asset's future). Ground each in real published success-rate data where you can find it; where you can't, say so and use a conservative, clearly-labeled estimate.
-2. developmentCosts — one entry per major development stage, with a low/high USD range. The "stage" string in each entry MUST exactly match a "stage" string in your timeline array (case-insensitive) — the calculator joins these two arrays by that field, not by position.
-3. revenueAssumptions — treatablePopulationCount MUST be a real number (not a prose range) for the specific, narrowly-defined population you're modeling (a narrower, more defensible population beats an inflated total-addressable-market figure — e.g. "severe obesity refractory to GLP-1 therapy" beats "all obesity"). NEVER assume large market penetration — 1-5% peak penetration is typical for a first-in-class asset; justify anything outside that range. pricePerPatientUsdLow/High should reflect realistic payer dynamics for this modality and indication, not just what similar gene therapies have charged in a more favorable reimbursement context.
-4. timeline — one entry per development stage (same "stage" names as developmentCosts) with a realistic duration in years, grounded in the Regulatory Agent's findings where available.
+What you must submit (all under "assumptions"). EVERY entry listed below needs its own "rationale" field — an analyst reviewing this memo must be able to see WHY each number was chosen without re-deriving it themselves. Never leave rationale as a placeholder or restate the number itself; name the actual reasoning (which risk factors apply, which cited benchmark you're anchoring to, why this asset departs from or matches it):
+1. phaseProbabilities — an array of gates from the asset's CURRENT stage through approval, in chronological order (earliest gate first — the calculator relies on this order). Each gate needs a realistic probability [0,1], a rationale naming the risk factors that apply to this asset, and a label (almost never "Fact" — these are benchmark-derived Assumptions or Inferences, not facts about this specific asset's future).
+2. developmentCosts — one entry per major development stage, with a low/high USD range and a rationale (what's driving the cost at this stage — trial size, CMC complexity, comparable program costs, etc.). The "stage" string in each entry MUST exactly match a "stage" string in your timeline array (case-insensitive) — the calculator joins these two arrays by that field, not by position.
+3. revenueAssumptions — treatablePopulationCount MUST be a real number (not a prose range) for the specific, narrowly-defined population you're modeling (a narrower, more defensible population beats an inflated total-addressable-market figure — e.g. "moderate-to-severe ulcerative colitis after biologic failure, US" beats "all ulcerative colitis"). pricePerPatientUsdLow/High should reflect realistic payer dynamics for this modality and indication, not just what similar products have charged in a more favorable reimbursement context. Include ONE rationale covering population sizing, penetration, pricing, and ramp timing together as a connected argument, not four disconnected numbers.
+4. timeline — one entry per development stage (same "stage" names as developmentCosts) with a realistic duration in years and a rationale, grounded in the Regulatory Agent's findings where available.
 5. discountRatePercent — early-stage/preclinical biotech typically uses 15-25%; justify your choice in discountRateRationale given this asset's specific stage and risk profile.
-6. exclusivityYears — the commercial window before patent expiration/generic erosion, grounded in the Patent Landscape Agent's findings where available.
+6. exclusivityYears — the commercial window before patent expiration/generic erosion, grounded in the Patent Landscape Agent's findings where available. Justify your choice in exclusivityYearsRationale (patent term, filing date, any extension/exclusivity considerations).
 
 benchmarkingNotes should explicitly reference the Deal Comparables Agent's findings — what a comparable deal's structure and economics imply about how the market would value this asset, or an honest statement that no clean comparable exists (do not fabricate one).
 
@@ -87,6 +90,12 @@ export type RnpvInput = {
   // agent's prior pass, fed back for a targeted second pass.
   reviewerFeedback?: string[];
   supplementaryDocuments?: string;
+  // User-supplied phase-probability/discount-rate/exclusivity-years
+  // override (components/agent-progress.tsx's "Known Financial Assumptions"
+  // form). Never included in the prompt below — see the comment on
+  // financialAssumptionsOverrideSchema for why keeping the agent blind to it
+  // matters.
+  financialAssumptionsOverride?: FinancialAssumptionsOverride;
 };
 
 function isToolUseBlock(block: Anthropic.ContentBlock): block is Anthropic.ToolUseBlock {
@@ -136,12 +145,77 @@ function summarizeGroundingContext(input: RnpvInput): string {
   return parts.join("\n");
 }
 
+// Placeholder assumptions for mock mode — deliberately round, generic
+// numbers (never claimed to be researched). Still run through the exact
+// same real computeRnpv()/applyFinancialAssumptionsOverride() production
+// code below, so this mock path genuinely exercises the calculator and the
+// override comparison feature, just without the LLM drafting the inputs.
+function mockFinancialAssumptions(): FinancialAssumptions {
+  return {
+    phaseProbabilities: [
+      { fromStage: "Preclinical", toStage: "Phase 1", probability: 0.1, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { fromStage: "Phase 1", toStage: "Phase 2", probability: 0.45, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { fromStage: "Phase 2", toStage: "Phase 3", probability: 0.2, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { fromStage: "Phase 3", toStage: "Approval", probability: 0.35, label: "Assumption", rationale: "[MOCK] placeholder." },
+    ],
+    developmentCosts: [
+      { stage: "Preclinical", lowUsd: 5_000_000, highUsd: 10_000_000, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { stage: "Phase 1", lowUsd: 10_000_000, highUsd: 20_000_000, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { stage: "Phase 2", lowUsd: 20_000_000, highUsd: 40_000_000, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { stage: "Phase 3", lowUsd: 50_000_000, highUsd: 100_000_000, label: "Assumption", rationale: "[MOCK] placeholder." },
+    ],
+    revenueAssumptions: {
+      treatablePopulationCount: 500_000,
+      treatablePopulationDescription: "[MOCK] placeholder population",
+      treatablePopulationLabel: "Assumption",
+      peakPenetrationRateLow: 0.01,
+      peakPenetrationRateHigh: 0.03,
+      pricePerPatientUsdLow: 50_000,
+      pricePerPatientUsdHigh: 100_000,
+      yearsToPeakSales: 4,
+      rationale: "[MOCK] placeholder.",
+      label: "Assumption",
+    },
+    timeline: [
+      { stage: "Preclinical", durationYears: 2, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { stage: "Phase 1", durationYears: 1.5, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { stage: "Phase 2", durationYears: 2, label: "Assumption", rationale: "[MOCK] placeholder." },
+      { stage: "Phase 3", durationYears: 3, label: "Assumption", rationale: "[MOCK] placeholder." },
+    ],
+    discountRatePercent: 18,
+    discountRateRationale: "[MOCK] placeholder discount rate for test mode.",
+    exclusivityYears: 10,
+    exclusivityYearsRationale: "[MOCK] placeholder.",
+  };
+}
+
 export async function runRnpvAgent(
   input: RnpvInput,
   parentSpan?: LangfuseSpanClient
 ): Promise<RnpvOutput> {
+  if (isMockAgentsEnabled()) {
+    const assumptions = mockFinancialAssumptions();
+    const computed = computeRnpv(assumptions, input.stage);
+    const providedOverride = input.financialAssumptionsOverride ?? null;
+    const providedComputed = providedOverride
+      ? computeRnpv(applyFinancialAssumptionsOverride(assumptions, providedOverride), input.stage)
+      : null;
+    return rnpvOutputSchema.parse({
+      assumptions,
+      computed,
+      benchmarkingNotes: {
+        summary: "[MOCK] Test mode — no real research performed (MOCK_AGENTS_FOR_LOCAL_TEST).",
+        label: "Unknown",
+      },
+      methodologyNote:
+        "This is a simplified risk-adjusted NPV model built from the assumptions above, computed deterministically (not LLM-generated arithmetic). It is a starting point for diligence, not a definitive valuation — every input is an estimate, several with wide uncertainty at this stage, and standard human review is still required.",
+      providedOverride,
+      providedComputed,
+    });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
-  const knownHostnames = new Set<string>();
+  const sources = new SourceLedger();
 
   const messages: Anthropic.MessageParam[] = [
     {
@@ -194,11 +268,39 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
     });
 
     messages.push({ role: "assistant", content: response.content });
-    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
+    sources.addWebSearchResults(response.content);
 
-    const submitBlock = response.content
-      .filter(isToolUseBlock)
-      .find((b) => b.name === "submit_findings");
+    const toolUseBlocks = response.content.filter(isToolUseBlock);
+    const submitBlock = toolUseBlocks.find((b) => b.name === "submit_findings");
+
+    // Execute every non-submit_findings tool call in this response up front
+    // — needed even when submitBlock is also present and fails validation,
+    // since every tool_use block from this assistant turn needs a matching
+    // tool_result in the very next message or the next API call is rejected
+    // outright. Confirmed live (2026-10): "tool_use ids were found without
+    // tool_result blocks immediately after" when the model called
+    // submit_findings alongside a search tool in the same turn and
+    // submit_findings failed validation — the old code returned/continued
+    // right after handling submitBlock, silently dropping the sibling
+    // tool_use block's required response.
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const block of toolUseBlocks) {
+      if (block === submitBlock) continue;
+      if (block.name === "search_pubmed") {
+        const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
+        const result = await searchPubmed(block.input as { query: string; maxResults?: number });
+        sources.addToolResult(result);
+        toolSpan?.end({ output: result });
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: JSON.stringify(result),
+        });
+      }
+      // web_search tool_use blocks are executed server-side by Anthropic —
+      // their results are already in this same response, nothing to do here.
+    }
+
     if (submitBlock) {
       const parsed = rnpvSubmissionSchema.safeParse(submitBlock.input);
       if (parsed.success) {
@@ -213,45 +315,44 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
             : []),
           ...parsed.data.assumptions.timeline.flatMap((t) => (t.citation ? [t.citation.sourceUrl] : [])),
         ];
-        const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
+        const unverified = sources.findUnverified(citationUrls);
         if (unverified.length === 0) {
           const computed = computeRnpv(parsed.data.assumptions, input.stage);
+          const providedOverride = input.financialAssumptionsOverride ?? null;
+          const providedComputed = providedOverride
+            ? computeRnpv(
+                applyFinancialAssumptionsOverride(parsed.data.assumptions, providedOverride),
+                input.stage
+              )
+            : null;
           return rnpvOutputSchema.parse({
             assumptions: parsed.data.assumptions,
             computed,
             benchmarkingNotes: parsed.data.benchmarkingNotes,
             methodologyNote:
               "This is a simplified risk-adjusted NPV model built from the assumptions above, computed deterministically (not LLM-generated arithmetic). It is a starting point for diligence, not a definitive valuation — every input is an estimate, several with wide uncertainty at this stage, and standard human review is still required.",
+            providedOverride,
+            providedComputed,
           });
         }
-        messages.push({
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: submitBlock.id,
-              content: `submit_findings input failed validation: these citation URLs were not seen in any real search_pubmed or web_search result this conversation: ${unverified.join(", ")}. Never invent a source URL — search to confirm them or omit the citation field on that entry and call submit_findings again.`,
-              is_error: true,
-            },
-          ],
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: submitBlock.id,
+          content: `submit_findings input failed validation: these citation URLs were not seen in any real search_pubmed or web_search result this conversation: ${unverified.join(", ")}. Never invent a source URL — search to confirm them or omit the citation field on that entry and call submit_findings again.`,
+          is_error: true,
         });
+        messages.push({ role: "user", content: toolResults });
         continue;
       }
-      messages.push({
-        role: "user",
-        content: [
-          {
-            type: "tool_result",
-            tool_use_id: submitBlock.id,
-            content: `submit_findings input failed validation: ${parsed.error.message}. Re-read the schema and call submit_findings again with the corrected, complete JSON structure — every field must be the correct type (arrays are actual arrays, objects are actual objects, not strings), and every developmentCosts[].stage must have a matching timeline[].stage entry.`,
-            is_error: true,
-          },
-        ],
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: submitBlock.id,
+        content: `submit_findings input failed validation: ${parsed.error.message}. Re-read the schema and call submit_findings again with the corrected, complete JSON structure — every field must be the correct type (arrays are actual arrays, objects are actual objects, not strings), and every developmentCosts[].stage must have a matching timeline[].stage entry.`,
+        is_error: true,
       });
+      messages.push({ role: "user", content: toolResults });
       continue;
     }
-
-    const toolUseBlocks = response.content.filter(isToolUseBlock);
 
     if (toolUseBlocks.length === 0) {
       messages.push({
@@ -261,22 +362,6 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
       continue;
     }
 
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const block of toolUseBlocks) {
-      if (block.name === "search_pubmed") {
-        const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
-        const result = await searchPubmed(block.input as { query: string; maxResults?: number });
-        if (result.length > 0) knownHostnames.add("pubmed.ncbi.nlm.nih.gov");
-        toolSpan?.end({ output: result });
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: JSON.stringify(result),
-        });
-      }
-      // web_search tool_use blocks are executed server-side by Anthropic —
-      // their results are already in this same response, nothing to do here.
-    }
     if (toolResults.length > 0) {
       messages.push({ role: "user", content: toolResults });
     }
