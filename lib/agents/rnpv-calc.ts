@@ -1,35 +1,45 @@
-// Deterministic rNPV calculator — deliberately NOT an LLM call. The rNPV
-// Agent (rnpv.ts) drafts and cites the underlying assumptions (phase
-// probabilities, costs, pricing, timeline, discount rate); this module does
-// the actual multi-year, probability-weighted discounting arithmetic. Same
-// "boring and explainable" principle synthesis.ts already applies to the
-// Confidence Score — compounding a discount rate across 8-12 years and a
-// multi-gate probability tree is exactly the class of arithmetic where LLMs
-// quietly drift, and a valuation number is worth more when it's
-// reproducible from its own inputs than when it merely looks plausible.
+// Deterministic rNPV calculator. The rNPV Agent (rnpv.ts) drafts and cites the
+// assumptions; this module does the arithmetic, so every valuation can be
+// reproduced from its inputs. tests/rnpv-reference.test.ts checks it against
+// independently calculated answers.
 //
-// This is a simplified, standard-shape rNPV model (development-cost years,
-// a linear commercial ramp, a flat hold through patent exclusivity, then a
-// 3-year generic-erosion tail folded into terminal value) — not a full
-// 3-statement financial model. Spreadsheet-precision modeling would imply a
-// level of confidence the underlying assumptions (wide low/high ranges,
-// preclinical-stage data) don't support.
+// Model steps, valued at the start of the valuation year, at asset level and
+// before any deal terms (upfront, milestones, royalties to a licensor):
+//   1. Development costs are spread over each stage's real duration and
+//      weighted by the chance of reaching that stage.
+//   2. Patients x list price x (1 - gross-to-net) gives net revenue.
+//   3. COGS, SG&A, royalties and tax are subtracted to give cash flow. Tax
+//      applies only to profit, and development losses earn no tax credit.
+//   4. Commercial cash flow is weighted by overall probability of success.
+//   5. Exclusivity ends at lossOfExclusivityYear when known, so development
+//      time uses up the patent term. Otherwise exclusivityYears counts from launch.
+//   6. Revenue then erodes to 60%/30%/15% of its last level over 3 years.
+//   7. Each cash flow is discounted from the end of the period it falls in.
+//
+// This is a simplified model, not a full financial forecast. Inflation, launch
+// costs outside the stated development costs, and working capital are excluded.
 
 import type {
-  FinancialAssumptions,
   FinancialAssumptionsOverride,
+  ModelAssumptions,
   PlausibilityWarning,
   RnpvComputed,
   SensitivityScenario,
   YearlyCashFlow,
 } from "./schemas";
 
+export const RNPV_MODEL_VERSION = 2;
+
+const EROSION_AFTER_EXCLUSIVITY = [0.6, 0.3, 0.15];
+const EPSILON = 1e-9;
+
 type ScenarioConfig = {
   scenario: "Conservative" | "Base" | "Aggressive";
   penetrationFactor: number; // 0 = low end of the range, 1 = high end
   priceFactor: number; // 0 = low end of the range, 1 = high end
-  probabilityMultiplier: number; // applied to every phase probability, then clamped to [0,1]
-  discountRateDeltaPercent: number; // added to discountRatePercent before clamping to [0,100]
+  costFactor: number; // 0 = low end of the range, 1 = high end
+  overallProbabilityMultiplier: number; // applied to overall POS, not to each gate
+  discountRateDeltaPercent: number;
   description: string;
 };
 
@@ -38,27 +48,30 @@ const SCENARIOS: ScenarioConfig[] = [
     scenario: "Conservative",
     penetrationFactor: 0,
     priceFactor: 0,
-    probabilityMultiplier: 0.8,
-    discountRateDeltaPercent: 5,
+    costFactor: 1,
+    overallProbabilityMultiplier: 0.8,
+    discountRateDeltaPercent: 2,
     description:
-      "Low end of penetration/pricing ranges, phase probabilities cut 20%, discount rate +5 points.",
+      "Low penetration and price, high development costs, overall probability of success cut 20%, discount rate +2 points.",
   },
   {
     scenario: "Base",
     penetrationFactor: 0.5,
     priceFactor: 0.5,
-    probabilityMultiplier: 1,
+    costFactor: 0.5,
+    overallProbabilityMultiplier: 1,
     discountRateDeltaPercent: 0,
-    description: "Midpoint of penetration/pricing ranges, phase probabilities and discount rate as estimated.",
+    description: "Midpoints of every range, with phase probabilities and discount rate as estimated.",
   },
   {
     scenario: "Aggressive",
     penetrationFactor: 1,
     priceFactor: 1,
-    probabilityMultiplier: 1.15,
-    discountRateDeltaPercent: -3,
+    costFactor: 0,
+    overallProbabilityMultiplier: 1.15,
+    discountRateDeltaPercent: -2,
     description:
-      "High end of penetration/pricing ranges, phase probabilities up 15% (capped at 1.0), discount rate -3 points.",
+      "High penetration and price, low development costs, overall probability of success up to 15% higher, discount rate -2 points.",
   },
 ];
 
@@ -70,229 +83,272 @@ function lerp(low: number, high: number, factor: number): number {
   return low + (high - low) * factor;
 }
 
+function stageKey(stage: string): string {
+  return stage.toLowerCase().trim();
+}
+
+function gatesMatchTimeline(assumptions: ModelAssumptions): boolean {
+  const stages = new Set(assumptions.timeline.map((stage) => stageKey(stage.stage)));
+  return assumptions.phaseProbabilities.every((gate) => stages.has(stageKey(gate.fromStage)));
+}
+
+// Chance of having reached the start of each timeline stage. A stage with no
+// gate carries no attrition. Gates are matched by name; position is only a
+// fallback for a user's free-text override, and checkPlausibility flags it.
+function stageEntryProbabilities(assumptions: ModelAssumptions, gates: number[]): number[] {
+  const byName = gatesMatchTimeline(assumptions);
+  const gateByStage = new Map(assumptions.phaseProbabilities.map((gate, i) => [stageKey(gate.fromStage), gates[i]]));
+  let running = 1;
+  return assumptions.timeline.map((stage, i) => {
+    const entry = running;
+    running *= (byName ? gateByStage.get(stageKey(stage.stage)) : gates[i]) ?? 1;
+    return entry;
+  });
+}
+
+function commercialYears(assumptions: ModelAssumptions, launchTime: number, valuationYear: number): number {
+  if (assumptions.lossOfExclusivityYear !== undefined) {
+    return Math.max(0, assumptions.lossOfExclusivityYear - (valuationYear + launchTime));
+  }
+  return assumptions.exclusivityYears;
+}
+
 type ModelResult = {
   yearlyCashFlows: YearlyCashFlow[];
   terminalValueUsd: number;
   totalRnpvUsd: number;
   overallProbabilityOfSuccess: number;
+  launchTime: number;
+  commercialYears: number;
+  peakNetRevenueUsd: number;
+  peakPatients: number;
 };
 
-function runModel(
-  assumptions: FinancialAssumptions,
-  config: Pick<
-    ScenarioConfig,
-    "penetrationFactor" | "priceFactor" | "probabilityMultiplier" | "discountRateDeltaPercent"
-  >
-): ModelResult {
+function runModel(assumptions: ModelAssumptions, config: ScenarioConfig, valuationYear: number): ModelResult {
   const discountRate = clamp(assumptions.discountRatePercent + config.discountRateDeltaPercent, 0, 100) / 100;
+  const presentValue = (amount: number, time: number) => amount / Math.pow(1 + discountRate, time);
 
-  const adjustedProbabilities = assumptions.phaseProbabilities.map((p) =>
-    clamp(p.probability * config.probabilityMultiplier, 0, 1)
-  );
+  // Each gate takes an equal share of the scenario change, so the overall
+  // probability moves by the stated percentage rather than compounding it.
+  const gateMultiplier = Math.pow(config.overallProbabilityMultiplier, 1 / assumptions.phaseProbabilities.length);
+  const gates = assumptions.phaseProbabilities.map((gate) => clamp(gate.probability * gateMultiplier, 0, 1));
+  const entryProbabilities = stageEntryProbabilities(assumptions, gates);
+  const overallProbabilityOfSuccess = gates.reduce((product, p) => product * p, 1);
 
-  // stageEntryProbabilities[i] = probability of having survived to the
-  // START of timeline stage i (product of every gate before it). Reuses the
-  // last known gate probability if there are more timeline stages than
-  // probability gates, rather than crashing on a length mismatch.
-  const stageEntryProbabilities: number[] = [];
-  let running = 1;
-  for (let i = 0; i < assumptions.timeline.length; i++) {
-    stageEntryProbabilities.push(running);
-    const gateProbability = adjustedProbabilities[Math.min(i, adjustedProbabilities.length - 1)] ?? 1;
-    running *= gateProbability;
-  }
-  const overallProbabilityOfSuccess = adjustedProbabilities.reduce((product, p) => product * p, 1);
-
-  // Matched by stage name (case-insensitive), not array index — see the
-  // schema comment on developmentCostEstimateSchema.stage. A cost entry
-  // whose stage name doesn't match any timeline stage contributes nothing
-  // rather than throwing; malformed input should degrade the number, not
-  // crash the run.
   const costByStage = new Map(
-    assumptions.developmentCosts.map((c) => [c.stage.toLowerCase().trim(), (c.lowUsd + c.highUsd) / 2])
+    assumptions.developmentCosts.map((cost) => [stageKey(cost.stage), lerp(cost.lowUsd, cost.highUsd, config.costFactor)])
   );
 
-  const yearlyCashFlows: YearlyCashFlow[] = [];
-  let yearCounter = 0;
+  const rows: YearlyCashFlow[] = [];
+  let totalPv = 0;
+  let time = 0;
 
   assumptions.timeline.forEach((stage, i) => {
-    const totalCost = costByStage.get(stage.stage.toLowerCase().trim()) ?? 0;
-    const wholeYears = Math.max(1, Math.round(stage.durationYears));
-    const annualCost = totalCost / wholeYears;
-    const entryProbability = stageEntryProbabilities[i];
-    for (let y = 0; y < wholeYears; y++) {
-      yearCounter++;
-      const grossCashFlow = -annualCost;
-      const probabilityAdjusted = grossCashFlow * entryProbability;
-      const discountedPresentValue = probabilityAdjusted / Math.pow(1 + discountRate, yearCounter);
-      yearlyCashFlows.push({
-        year: yearCounter,
+    const stageEnd = time + stage.durationYears;
+    const totalCost = costByStage.get(stageKey(stage.stage)) ?? 0;
+    while (time < stageEnd - EPSILON) {
+      const periodEnd = Math.min(Math.floor(time + EPSILON) + 1, stageEnd);
+      const gross = -totalCost * ((periodEnd - time) / stage.durationYears);
+      const adjusted = gross * entryProbabilities[i];
+      const pv = presentValue(adjusted, periodEnd);
+      totalPv += pv;
+      rows.push({
+        year: Math.ceil(periodEnd - EPSILON),
         stage: stage.stage,
-        grossCashFlowUsd: Math.round(grossCashFlow),
-        cumulativeProbability: entryProbability,
-        probabilityAdjustedCashFlowUsd: Math.round(probabilityAdjusted),
-        discountedPresentValueUsd: Math.round(discountedPresentValue),
+        grossCashFlowUsd: Math.round(gross),
+        cumulativeProbability: entryProbabilities[i],
+        probabilityAdjustedCashFlowUsd: Math.round(adjusted),
+        discountedPresentValueUsd: Math.round(pv),
       });
+      time = periodEnd;
     }
+    time = stageEnd;
   });
+  const launchTime = time;
 
-  const { revenueAssumptions, exclusivityYears } = assumptions;
-  const penetration = lerp(
-    revenueAssumptions.peakPenetrationRateLow,
-    revenueAssumptions.peakPenetrationRateHigh,
-    config.penetrationFactor
-  );
-  const price = lerp(
-    revenueAssumptions.pricePerPatientUsdLow,
-    revenueAssumptions.pricePerPatientUsdHigh,
-    config.priceFactor
-  );
-  const peakAnnualRevenue = revenueAssumptions.treatablePopulationCount * penetration * price;
+  const { revenueAssumptions: revenue, commercialEconomics: economics } = assumptions;
+  const penetration = lerp(revenue.peakPenetrationRateLow, revenue.peakPenetrationRateHigh, config.penetrationFactor);
+  const listPrice = lerp(revenue.pricePerPatientUsdLow, revenue.pricePerPatientUsdHigh, config.priceFactor);
+  const netPrice = listPrice * (1 - economics.grossToNetPercent / 100);
+  const rampYears = Math.max(1, revenue.yearsToPeakSales);
 
-  const rampYears = Math.max(1, Math.round(revenueAssumptions.yearsToPeakSales));
-  const holdYears = Math.max(0, Math.round(exclusivityYears) - rampYears);
+  const patientsInYear = (year: number): number => {
+    const ramp = Math.min(year / rampYears, 1);
+    if (assumptions.treatmentModel === "chronic") return revenue.treatablePopulationCount * penetration * ramp;
+    // A one-time therapy treats each patient once: the existing pool is used
+    // up during the ramp, and only newly eligible patients remain after that.
+    const fromPool = year <= Math.ceil(rampYears) ? (revenue.treatablePopulationCount * penetration) / Math.ceil(rampYears) : 0;
+    return (assumptions.annualNewPatients ?? 0) * penetration * ramp + fromPool;
+  };
 
-  for (let y = 1; y <= rampYears; y++) {
-    yearCounter++;
-    const revenue = peakAnnualRevenue * (y / rampYears);
-    const probabilityAdjusted = revenue * overallProbabilityOfSuccess;
-    const discountedPresentValue = probabilityAdjusted / Math.pow(1 + discountRate, yearCounter);
-    yearlyCashFlows.push({
-      year: yearCounter,
-      stage: "Commercial ramp",
-      grossCashFlowUsd: Math.round(revenue),
+  const operatingCosts =
+    (economics.cogsPercentOfNetRevenue + economics.sgaPercentOfNetRevenue + economics.royaltyPercentOfNetRevenue) / 100;
+  const cashFromRevenue = (netRevenue: number): number => {
+    const operatingProfit = netRevenue * (1 - operatingCosts);
+    return operatingProfit > 0 ? operatingProfit * (1 - economics.taxRatePercent / 100) : operatingProfit;
+  };
+
+  const years = commercialYears(assumptions, launchTime, valuationYear);
+  let lastAnnualRevenue = 0;
+  let peakNetRevenueUsd = 0;
+  let peakPatients = 0;
+
+  for (let year = 1; year < years + 1 - EPSILON; year++) {
+    const share = Math.min(1, years - (year - 1));
+    const patients = patientsInYear(year);
+    const annualRevenue = patients * netPrice;
+    lastAnnualRevenue = annualRevenue;
+    peakNetRevenueUsd = Math.max(peakNetRevenueUsd, annualRevenue);
+    peakPatients = Math.max(peakPatients, patients);
+    const netRevenue = annualRevenue * share;
+    const cash = cashFromRevenue(netRevenue);
+    const adjusted = cash * overallProbabilityOfSuccess;
+    const periodEnd = launchTime + Math.min(year, years);
+    const pv = presentValue(adjusted, periodEnd);
+    totalPv += pv;
+    rows.push({
+      year: Math.ceil(periodEnd - EPSILON),
+      stage: year < rampYears ? "Commercial ramp" : "Peak sales (exclusivity)",
+      grossCashFlowUsd: Math.round(cash),
+      netRevenueUsd: Math.round(netRevenue),
       cumulativeProbability: overallProbabilityOfSuccess,
-      probabilityAdjustedCashFlowUsd: Math.round(probabilityAdjusted),
-      discountedPresentValueUsd: Math.round(discountedPresentValue),
+      probabilityAdjustedCashFlowUsd: Math.round(adjusted),
+      discountedPresentValueUsd: Math.round(pv),
     });
   }
 
-  for (let y = 0; y < holdYears; y++) {
-    yearCounter++;
-    const probabilityAdjusted = peakAnnualRevenue * overallProbabilityOfSuccess;
-    const discountedPresentValue = probabilityAdjusted / Math.pow(1 + discountRate, yearCounter);
-    yearlyCashFlows.push({
-      year: yearCounter,
-      stage: "Peak sales (exclusivity)",
-      grossCashFlowUsd: Math.round(peakAnnualRevenue),
-      cumulativeProbability: overallProbabilityOfSuccess,
-      probabilityAdjustedCashFlowUsd: Math.round(probabilityAdjusted),
-      discountedPresentValueUsd: Math.round(discountedPresentValue),
-    });
-  }
-
-  // Post-exclusivity decline tail — a standard step-down convention
-  // (60%/30%/15% of peak over 3 years) standing in for generic/biosimilar
-  // erosion, folded into terminalValueUsd rather than the main yearly table
-  // since it's a simplifying convention, not a claim about specific future
-  // years.
-  const decayFractions = [0.6, 0.3, 0.15];
-  let terminalValueUsd = 0;
-  decayFractions.forEach((fraction, idx) => {
-    const year = yearCounter + idx + 1;
-    const revenue = peakAnnualRevenue * fraction;
-    const probabilityAdjusted = revenue * overallProbabilityOfSuccess;
-    terminalValueUsd += probabilityAdjusted / Math.pow(1 + discountRate, year);
+  let terminalValue = 0;
+  EROSION_AFTER_EXCLUSIVITY.forEach((fraction, i) => {
+    const cash = cashFromRevenue(lastAnnualRevenue * fraction);
+    terminalValue += presentValue(cash * overallProbabilityOfSuccess, launchTime + years + i + 1);
   });
-
-  const totalRnpvUsd = Math.round(
-    yearlyCashFlows.reduce((sum, row) => sum + row.discountedPresentValueUsd, 0) + terminalValueUsd
-  );
 
   return {
-    yearlyCashFlows,
-    terminalValueUsd: Math.round(terminalValueUsd),
-    totalRnpvUsd,
+    yearlyCashFlows: rows,
+    terminalValueUsd: Math.round(terminalValue),
+    totalRnpvUsd: Math.round(totalPv + terminalValue),
     overallProbabilityOfSuccess,
+    launchTime,
+    commercialYears: years,
+    peakNetRevenueUsd,
+    peakPatients,
   };
 }
 
-// Stages where the asset has not yet reached market — used to gate the
-// discount-rate and overall-probability checks below, since "too low a
-// discount rate" and "too high a probability of success" are only
-// implausible *before* approval; an Approved asset legitimately clears
-// both. Matches STAGE_OPTIONS in lib/validations/therapy-profile.ts minus
-// "Approved".
+// Problems that would make the valuation meaningless. The agent gets these
+// back to correct before its submission is accepted, instead of the calculator
+// guessing (a mismatched stage name used to silently become a $0 cost).
+export function validateRnpvAssumptions(assumptions: ModelAssumptions): string[] {
+  const problems: string[] = [];
+  const stages = assumptions.timeline.map((stage) => stageKey(stage.stage));
+  const known = new Set(stages);
+  if (known.size !== stages.length) problems.push("timeline has duplicate stage names");
+
+  for (const stage of assumptions.timeline) {
+    if (!assumptions.developmentCosts.some((cost) => stageKey(cost.stage) === stageKey(stage.stage))) {
+      problems.push(`timeline stage "${stage.stage}" has no developmentCosts entry (use 0 if it truly costs nothing)`);
+    }
+  }
+  for (const cost of assumptions.developmentCosts) {
+    if (!known.has(stageKey(cost.stage))) problems.push(`developmentCosts stage "${cost.stage}" is not a timeline stage`);
+    if (cost.lowUsd > cost.highUsd) problems.push(`developmentCosts "${cost.stage}" has low above high`);
+  }
+
+  const gateStages = assumptions.phaseProbabilities.map((gate) => stageKey(gate.fromStage));
+  if (new Set(gateStages).size !== gateStages.length) problems.push("phaseProbabilities has duplicate fromStage values");
+  for (const gate of assumptions.phaseProbabilities) {
+    if (!known.has(stageKey(gate.fromStage))) {
+      problems.push(`phaseProbabilities fromStage "${gate.fromStage}" must exactly match a timeline stage`);
+    }
+  }
+  const positions = gateStages.map((stage) => stages.indexOf(stage)).filter((position) => position >= 0);
+  if (positions.some((position, i) => i > 0 && position < positions[i - 1])) {
+    problems.push("phaseProbabilities must follow the same order as timeline");
+  }
+
+  const { revenueAssumptions: revenue, commercialEconomics: economics } = assumptions;
+  if (revenue.peakPenetrationRateLow > revenue.peakPenetrationRateHigh) problems.push("peak penetration low is above high");
+  if (revenue.pricePerPatientUsdLow > revenue.pricePerPatientUsdHigh) problems.push("price per patient low is above high");
+  if (economics.cogsPercentOfNetRevenue + economics.sgaPercentOfNetRevenue + economics.royaltyPercentOfNetRevenue >= 100) {
+    problems.push("COGS, SG&A and royalties together must be below 100% of net revenue");
+  }
+  return problems;
+}
+
 const UNAPPROVED_STAGES = ["Preclinical", "Phase 1", "Phase 2", "Phase 3"];
 
-// Deterministic plausibility backstop — see schemas.ts's comment on
-// plausibilityWarningSchema for why this exists alongside (not instead of)
-// Critic's own UnrealisticFinancialAssumption check. Thresholds come
-// directly from the rNPV Agent's own system prompt guidance (rnpv.ts) and
-// standard industry rules of thumb: this just makes a few of those rules
-// unconditionally enforced in code rather than guidance the model can
-// drift from under its own reasoning.
 function checkPlausibility(
-  assumptions: FinancialAssumptions,
-  overallProbabilityOfSuccess: number,
-  stage: string
+  assumptions: ModelAssumptions,
+  result: ModelResult,
+  stage: string,
+  valuationYear: number
 ): PlausibilityWarning[] {
   const warnings: PlausibilityWarning[] = [];
-  const { revenueAssumptions, discountRatePercent, exclusivityYears } = assumptions;
+  const { revenueAssumptions: revenue, discountRatePercent, lossOfExclusivityYear } = assumptions;
   const isUnapproved = UNAPPROVED_STAGES.includes(stage);
 
-  if (revenueAssumptions.peakPenetrationRateHigh > 0.1) {
+  if (!gatesMatchTimeline(assumptions)) {
+    warnings.push({
+      field: "phaseProbabilities",
+      severity: "Flag",
+      message: "Some phase probabilities don't match a timeline stage by name, so they were applied in order. Check that each probability lines up with the intended stage.",
+    });
+  }
+  if (revenue.peakPenetrationRateHigh > 0.1) {
     warnings.push({
       field: "peakPenetrationRateHigh",
       severity: "Flag",
-      message: `Peak penetration high end of ${(revenueAssumptions.peakPenetrationRateHigh * 100).toFixed(1)}% is well above the ~1-5% typical for a first-in-class asset — treat as an outlier case, not the base case, unless explicitly justified.`,
+      message: `Peak penetration high end of ${(revenue.peakPenetrationRateHigh * 100).toFixed(1)}% is well above the ~1-5% typical for a first-in-class asset. Treat it as an outlier case, not the base case.`,
     });
   }
-
-  if (isUnapproved && discountRatePercent < 10) {
-    warnings.push({
-      field: "discountRatePercent",
-      severity: "Flag",
-      message: `A ${discountRatePercent}% discount rate is unusually low for a ${stage} asset — industry practice applies 15-25% to clinical-stage biotech; a rate this low understates risk.`,
-    });
-  } else if (discountRatePercent > 35) {
+  if (discountRatePercent > 20) {
     warnings.push({
       field: "discountRatePercent",
       severity: "Note",
-      message: `A ${discountRatePercent}% discount rate is unusually high and may be effectively zeroing out long-dated cash flows — confirm this wasn't a data-entry error.`,
+      message: `A ${discountRatePercent}% discount rate may count development risk twice, because rNPV already applies it through the phase probabilities. Confirm the rate reflects cost of capital, not clinical risk.`,
+    });
+  } else if (discountRatePercent < 5) {
+    warnings.push({
+      field: "discountRatePercent",
+      severity: "Note",
+      message: `A ${discountRatePercent}% discount rate is close to a risk-free rate and leaves out market and financing risk. Confirm this is intended.`,
     });
   }
-
-  if (isUnapproved && overallProbabilityOfSuccess > 0.5) {
+  if (isUnapproved && result.overallProbabilityOfSuccess > 0.5) {
     warnings.push({
       field: "overallProbabilityOfSuccess",
       severity: "Flag",
-      message: `An overall probability of success of ${(overallProbabilityOfSuccess * 100).toFixed(1)}% is far above the ~5-15% typical composite preclinical/early-clinical-to-approval odds for biotech — the underlying phase probabilities are likely too optimistic.`,
+      message: `An overall probability of success of ${(result.overallProbabilityOfSuccess * 100).toFixed(1)}% is unusually high for an unapproved asset. Check each phase probability.`,
     });
   }
-
-  if (exclusivityYears > 20) {
+  if (result.commercialYears <= 0) {
     warnings.push({
-      field: "exclusivityYears",
-      severity: "Note",
-      message: `${exclusivityYears} years of commercial exclusivity exceeds a typical patent term (20 years from filing, commonly ~8-12 years of actual post-approval runway) — confirm this accounts for time already elapsed and any patent term extensions, not the full statutory term.`,
+      field: "lossOfExclusivityYear",
+      severity: "Flag",
+      message: `Exclusivity ends in ${lossOfExclusivityYear}, before the modeled launch in ${valuationYear + Math.ceil(result.launchTime)}, so this model has no protected sales. Check the patent position or timeline.`,
     });
-  } else if (exclusivityYears < 3) {
+  } else if (result.commercialYears < revenue.yearsToPeakSales) {
     warnings.push({
-      field: "exclusivityYears",
+      field: "commercialYears",
       severity: "Note",
-      message: `${exclusivityYears} years of exclusivity is unusually short — confirm this wasn't a data-entry error.`,
+      message: `Only ${result.commercialYears.toFixed(1)} protected years remain after launch, fewer than the ${revenue.yearsToPeakSales} years needed to reach peak sales.`,
+    });
+  } else if (result.commercialYears > 20) {
+    warnings.push({
+      field: "commercialYears",
+      severity: "Note",
+      message: `${result.commercialYears.toFixed(1)} protected years after launch exceeds a standard 20-year patent term. Check the exclusivity assumption.`,
     });
   }
-
   return warnings;
 }
 
-// Merges a user-supplied override on top of the AI-drafted assumptions so
-// computeRnpv can be run a second time against the user's own numbers — same
-// calculator, same clamping/scenario logic, just different inputs. Phase
-// probabilities are replaced wholesale (not merged gate-by-gate): the user's
-// gate chain may have a different number of stages than the AI drafted, and
-// partially splicing the two would produce a probability tree that matches
-// neither source. developmentCosts, timeline, and revenueAssumptions are
-// left as the AI drafted them (out of scope for this override — see the
-// "High-leverage only" scope decision), so the two totals aren't a pure A/B
-// on probability/discount/exclusivity alone, but they isolate the three
-// inputs most likely to explain a gap against an external valuation.
+// Merges a user's numbers over the AI-drafted assumptions. A user's exclusivity
+// figure replaces the AI's expiry year, or that year would still take priority.
 export function applyFinancialAssumptionsOverride(
-  assumptions: FinancialAssumptions,
+  assumptions: ModelAssumptions,
   override: FinancialAssumptionsOverride
-): FinancialAssumptions {
+): ModelAssumptions {
   return {
     ...assumptions,
     phaseProbabilities: override.phaseProbabilities
@@ -306,39 +362,42 @@ export function applyFinancialAssumptionsOverride(
       : assumptions.phaseProbabilities,
     discountRatePercent: override.discountRatePercent ?? assumptions.discountRatePercent,
     discountRateRationale:
-      override.discountRatePercent !== undefined
-        ? "User-provided discount rate."
-        : assumptions.discountRateRationale,
+      override.discountRatePercent !== undefined ? "User-provided discount rate." : assumptions.discountRateRationale,
     exclusivityYears: override.exclusivityYears ?? assumptions.exclusivityYears,
+    lossOfExclusivityYear: override.exclusivityYears !== undefined ? undefined : assumptions.lossOfExclusivityYear,
     exclusivityYearsRationale:
-      override.exclusivityYears !== undefined
-        ? "User-provided exclusivity estimate."
-        : assumptions.exclusivityYearsRationale,
+      override.exclusivityYears !== undefined ? "User-provided exclusivity estimate." : assumptions.exclusivityYearsRationale,
   };
 }
 
-export function computeRnpv(assumptions: FinancialAssumptions, stage: string): RnpvComputed {
-  const baseConfig = SCENARIOS.find((s) => s.scenario === "Base");
+export function computeRnpv(
+  assumptions: ModelAssumptions,
+  stage: string,
+  valuationDate: Date = new Date()
+): RnpvComputed {
+  const valuationYear = valuationDate.getUTCFullYear();
+  const baseConfig = SCENARIOS.find((scenario) => scenario.scenario === "Base");
   if (!baseConfig) throw new Error("rnpv-calc: Base scenario config missing");
-  const baseResult = runModel(assumptions, baseConfig);
+  const base = runModel(assumptions, baseConfig, valuationYear);
 
-  const sensitivityScenarios: SensitivityScenario[] = SCENARIOS.map((config) => {
-    const result = config.scenario === "Base" ? baseResult : runModel(assumptions, config);
-    return {
-      scenario: config.scenario,
-      keyAssumptionChanges: config.description,
-      rnpvUsd: result.totalRnpvUsd,
-    };
-  });
-
-  const plausibilityWarnings = checkPlausibility(assumptions, baseResult.overallProbabilityOfSuccess, stage);
+  const sensitivityScenarios: SensitivityScenario[] = SCENARIOS.map((config) => ({
+    scenario: config.scenario,
+    keyAssumptionChanges: config.description,
+    rnpvUsd: config.scenario === "Base" ? base.totalRnpvUsd : runModel(assumptions, config, valuationYear).totalRnpvUsd,
+  }));
 
   return {
-    yearlyCashFlows: baseResult.yearlyCashFlows,
-    terminalValueUsd: baseResult.terminalValueUsd,
-    totalRnpvUsd: baseResult.totalRnpvUsd,
-    overallProbabilityOfSuccess: baseResult.overallProbabilityOfSuccess,
+    modelVersion: RNPV_MODEL_VERSION,
+    valuationYear,
+    launchYear: valuationYear + Math.ceil(base.launchTime - EPSILON),
+    commercialYearsBeforeLossOfExclusivity: base.commercialYears,
+    peakNetRevenueUsd: Math.round(base.peakNetRevenueUsd),
+    peakPatientsTreated: Math.round(base.peakPatients),
+    yearlyCashFlows: base.yearlyCashFlows,
+    terminalValueUsd: base.terminalValueUsd,
+    totalRnpvUsd: base.totalRnpvUsd,
+    overallProbabilityOfSuccess: base.overallProbabilityOfSuccess,
     sensitivityScenarios,
-    plausibilityWarnings,
+    plausibilityWarnings: checkPlausibility(assumptions, base, stage, valuationYear),
   };
 }

@@ -362,6 +362,19 @@ export const timelineStageSchema = z.object({
   citation: citationRefSchema.optional(),
 });
 
+export const commercialEconomicsSchema = z.object({
+  grossToNetPercent: z.number().min(0).max(100), // rebates and discounts off list price
+  cogsPercentOfNetRevenue: z.number().min(0).max(100),
+  sgaPercentOfNetRevenue: z.number().min(0).max(100),
+  royaltyPercentOfNetRevenue: z.number().min(0).max(100), // existing third-party royalties, not new deal terms
+  taxRatePercent: z.number().min(0).max(100),
+  rationale: z.string(),
+  label: claimLabelSchema,
+  citation: citationRefSchema.optional(),
+});
+
+export const treatmentModelSchema = z.enum(["chronic", "oneTime"]);
+
 export const financialAssumptionsSchema = z.object({
   phaseProbabilities: z.array(phaseProbabilitySchema).min(1),
   developmentCosts: z.array(developmentCostEstimateSchema).min(1),
@@ -371,13 +384,28 @@ export const financialAssumptionsSchema = z.object({
   discountRateRationale: z.string(),
   exclusivityYears: z.number().positive(),
   exclusivityYearsRationale: z.string().optional(),
+  // Optional here so memos saved before model version 2 still parse.
+  // modelAssumptionsSchema below makes the first two required for new runs.
+  commercialEconomics: commercialEconomicsSchema.optional(),
+  treatmentModel: treatmentModelSchema.optional(),
+  // One-time therapies only: patients newly eligible each year.
+  annualNewPatients: z.number().nonnegative().optional(),
+  // Calendar year protection ends. Takes priority over exclusivityYears, so
+  // that development time uses up the patent term.
+  lossOfExclusivityYear: z.number().int().optional(),
 });
 export type FinancialAssumptions = z.infer<typeof financialAssumptionsSchema>;
+
+export const modelAssumptionsSchema = financialAssumptionsSchema.extend({
+  commercialEconomics: commercialEconomicsSchema,
+  treatmentModel: treatmentModelSchema,
+});
+export type ModelAssumptions = z.infer<typeof modelAssumptionsSchema>;
 
 // What the LLM actually submits — assumptions plus a qualitative benchmark
 // note. Never `computed`: see the section comment above.
 export const rnpvSubmissionSchema = z.object({
-  assumptions: financialAssumptionsSchema,
+  assumptions: modelAssumptionsSchema,
   benchmarkingNotes: z.object({
     summary: z.string(),
     label: claimLabelSchema,
@@ -388,7 +416,8 @@ export type RnpvSubmission = z.infer<typeof rnpvSubmissionSchema>;
 export const yearlyCashFlowSchema = z.object({
   year: z.number().int().positive(),
   stage: z.string(),
-  grossCashFlowUsd: z.number(), // negative during development, positive once commercial
+  grossCashFlowUsd: z.number(), // if successful, before risk weighting: development cost, then after-tax commercial cash flow since model version 2
+  netRevenueUsd: z.number().optional(),
   cumulativeProbability: z.number().min(0).max(1),
   probabilityAdjustedCashFlowUsd: z.number(),
   discountedPresentValueUsd: z.number(),
@@ -419,6 +448,14 @@ export const plausibilityWarningSchema = z.object({
 export type PlausibilityWarning = z.infer<typeof plausibilityWarningSchema>;
 
 export const rnpvComputedSchema = z.object({
+  // Absent on memos saved before model version 2, which counted revenue as
+  // cash flow and didn't subtract operating costs or tax.
+  modelVersion: z.number().int().optional(),
+  valuationYear: z.number().int().optional(),
+  launchYear: z.number().int().optional(),
+  commercialYearsBeforeLossOfExclusivity: z.number().optional(),
+  peakNetRevenueUsd: z.number().optional(),
+  peakPatientsTreated: z.number().optional(),
   yearlyCashFlows: z.array(yearlyCashFlowSchema),
   terminalValueUsd: z.number(),
   totalRnpvUsd: z.number(),

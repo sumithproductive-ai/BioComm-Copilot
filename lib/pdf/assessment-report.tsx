@@ -471,6 +471,11 @@ export function AssessmentReportDocument({
           <>
             <SectionTitle>Financial Valuation (rNPV)</SectionTitle>
             <Text style={[styles.muted, { marginBottom: 6 }]}>{rnpv.methodologyNote}</Text>
+            {rnpv.computed.modelVersion === undefined && (
+              <Text style={[styles.body, { color: "#dc2626", marginBottom: 6 }]}>
+                Earlier model: this valuation counted revenue as cash flow, without subtracting operating costs or tax, so it is likely overstated. Run the assessment again for a corrected figure.
+              </Text>
+            )}
             {rnpv.providedOverride && rnpv.providedComputed && (
               <View style={{ marginBottom: 8 }}>
                 <Text style={styles.subheading}>AI-estimated vs. provided assumptions</Text>
@@ -480,7 +485,8 @@ export function AssessmentReportDocument({
                     <Text style={styles.statValue}>{formatUsd(rnpv.computed.totalRnpvUsd)}</Text>
                     <Text style={[styles.muted, { marginTop: 2 }]}>
                       POS {(rnpv.computed.overallProbabilityOfSuccess * 100).toFixed(2)}% · Discount{" "}
-                      {rnpv.assumptions.discountRatePercent}% · Exclusivity {rnpv.assumptions.exclusivityYears}y
+                      {rnpv.assumptions.discountRatePercent}% · Exclusivity{" "}
+                      {(rnpv.computed.commercialYearsBeforeLossOfExclusivity ?? rnpv.assumptions.exclusivityYears).toFixed(1)}y
                     </Text>
                   </View>
                   <View style={[styles.statTile, { width: "48%", borderColor: COLORS.navy }]}>
@@ -489,7 +495,8 @@ export function AssessmentReportDocument({
                     <Text style={[styles.muted, { marginTop: 2 }]}>
                       POS {(rnpv.providedComputed.overallProbabilityOfSuccess * 100).toFixed(2)}% · Discount{" "}
                       {rnpv.providedOverride.discountRatePercent ?? rnpv.assumptions.discountRatePercent}% ·
-                      Exclusivity {rnpv.providedOverride.exclusivityYears ?? rnpv.assumptions.exclusivityYears}y
+                      Exclusivity{" "}
+                      {(rnpv.providedComputed.commercialYearsBeforeLossOfExclusivity ?? rnpv.assumptions.exclusivityYears).toFixed(1)}y
                     </Text>
                   </View>
                 </View>
@@ -553,6 +560,29 @@ export function AssessmentReportDocument({
               <CitationLine citation={rnpv.assumptions.revenueAssumptions.treatablePopulationCitation ?? null} />
             </View>
 
+            {rnpv.assumptions.commercialEconomics && (
+              <>
+                <Text style={[styles.subheading, { marginTop: 6 }]}>Commercial economics</Text>
+                <View style={styles.card} wrap={false}>
+                  <Text style={styles.body}>
+                    Gross-to-net {rnpv.assumptions.commercialEconomics.grossToNetPercent}% · COGS{" "}
+                    {rnpv.assumptions.commercialEconomics.cogsPercentOfNetRevenue}% · SG&amp;A{" "}
+                    {rnpv.assumptions.commercialEconomics.sgaPercentOfNetRevenue}% · Royalties{" "}
+                    {rnpv.assumptions.commercialEconomics.royaltyPercentOfNetRevenue}% · Tax{" "}
+                    {rnpv.assumptions.commercialEconomics.taxRatePercent}%
+                  </Text>
+                  <Text style={styles.body}>{rnpv.assumptions.commercialEconomics.rationale}</Text>
+                  {rnpv.computed.peakNetRevenueUsd !== undefined && (
+                    <Text style={styles.body}>
+                      Base-case peak net revenue {formatUsd(rnpv.computed.peakNetRevenueUsd)} · Peak patients{" "}
+                      {(rnpv.computed.peakPatientsTreated ?? 0).toLocaleString()} · Modeled launch {rnpv.computed.launchYear}
+                    </Text>
+                  )}
+                  <CitationLine citation={rnpv.assumptions.commercialEconomics.citation ?? null} />
+                </View>
+              </>
+            )}
+
             <Text style={[styles.subheading, { marginTop: 6 }]}>Development costs &amp; timeline</Text>
             {rnpv.assumptions.timeline.map((stage, i) => {
               const cost = rnpv.assumptions.developmentCosts.find(
@@ -578,7 +608,7 @@ export function AssessmentReportDocument({
             })}
             <Text style={[styles.body, { marginTop: 4 }]}>
               Discount rate: {rnpv.assumptions.discountRatePercent}% — {rnpv.assumptions.discountRateRationale} ·
-              Exclusivity: {rnpv.assumptions.exclusivityYears} years
+              Protected years after launch: {(rnpv.computed.commercialYearsBeforeLossOfExclusivity ?? rnpv.assumptions.exclusivityYears).toFixed(1)}
               {rnpv.assumptions.exclusivityYearsRationale ? ` — ${rnpv.assumptions.exclusivityYearsRationale}` : ""}
             </Text>
 

@@ -48,6 +48,13 @@ export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
         {methodologyNote}
       </div>
 
+      {computed.modelVersion === undefined && (
+        <div className="rounded-[9px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <span className="font-semibold">Earlier model:</span> this valuation counted revenue as cash flow, without
+          subtracting operating costs or tax, so it is likely overstated. Run the assessment again for a corrected figure.
+        </div>
+      )}
+
       {providedOverride && providedComputed && (
         <div>
           <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
@@ -61,8 +68,8 @@ export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
               <p className="mt-2 text-lg font-bold text-brand-navy">{formatUsd(computed.totalRnpvUsd)}</p>
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Overall probability of success: {(computed.overallProbabilityOfSuccess * 100).toFixed(2)}% ·
-                Discount rate: {assumptions.discountRatePercent}% · Exclusivity: {assumptions.exclusivityYears}{" "}
-                years
+                Discount rate: {assumptions.discountRatePercent}% · Exclusivity:{" "}
+                {(computed.commercialYearsBeforeLossOfExclusivity ?? assumptions.exclusivityYears).toFixed(1)} years
               </p>
             </div>
             <div className="rounded-[9px] border border-brand-navy/30 bg-blue-50/50 px-4 py-3">
@@ -73,7 +80,8 @@ export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Overall probability of success: {(providedComputed.overallProbabilityOfSuccess * 100).toFixed(2)}%
                 · Discount rate: {providedOverride.discountRatePercent ?? assumptions.discountRatePercent}% ·
-                Exclusivity: {providedOverride.exclusivityYears ?? assumptions.exclusivityYears} years
+                Exclusivity:{" "}
+                {(providedComputed.commercialYearsBeforeLossOfExclusivity ?? assumptions.exclusivityYears).toFixed(1)} years
               </p>
             </div>
           </div>
@@ -200,6 +208,34 @@ export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
         </div>
       </div>
 
+      {assumptions.commercialEconomics && (
+        <div>
+          <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+            Commercial Economics
+          </h3>
+          <div className="rounded-[9px] border border-border bg-white px-4 py-3">
+            <p className="text-sm text-foreground">
+              Gross-to-net: {assumptions.commercialEconomics.grossToNetPercent}% · COGS:{" "}
+              {assumptions.commercialEconomics.cogsPercentOfNetRevenue}% · SG&amp;A:{" "}
+              {assumptions.commercialEconomics.sgaPercentOfNetRevenue}% · Royalties:{" "}
+              {assumptions.commercialEconomics.royaltyPercentOfNetRevenue}% · Tax:{" "}
+              {assumptions.commercialEconomics.taxRatePercent}%
+            </p>
+            <p className="mt-1.5 text-sm text-foreground">{assumptions.commercialEconomics.rationale}</p>
+            {computed.peakNetRevenueUsd !== undefined && (
+              <p className="mt-1.5 text-sm text-foreground">
+                Base-case peak net revenue: {formatUsd(computed.peakNetRevenueUsd)} · Peak patients treated:{" "}
+                {(computed.peakPatientsTreated ?? 0).toLocaleString()} · Modeled launch: {computed.launchYear}
+              </p>
+            )}
+            <div className="mt-1.5 flex items-center gap-2">
+              <ClaimLabelBadge label={assumptions.commercialEconomics.label} />
+              <CitationLink citation={assumptions.commercialEconomics.citation} />
+            </div>
+          </div>
+        </div>
+      )}
+
       <div>
         <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           Development Costs &amp; Timeline
@@ -234,7 +270,7 @@ export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           Discount rate: {assumptions.discountRatePercent}% — {assumptions.discountRateRationale} ·
-          Exclusivity: {assumptions.exclusivityYears} years
+          Protected years after launch: {(computed.commercialYearsBeforeLossOfExclusivity ?? assumptions.exclusivityYears).toFixed(1)}
           {assumptions.exclusivityYearsRationale ? ` — ${assumptions.exclusivityYearsRationale}` : ""}
         </p>
       </div>
@@ -249,15 +285,15 @@ export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
               <tr className="border-b border-border text-muted-foreground">
                 <th className="px-3 py-2 font-medium">Year</th>
                 <th className="px-3 py-2 font-medium">Stage</th>
-                <th className="px-3 py-2 font-medium">Gross Cash Flow</th>
+                <th className="px-3 py-2 font-medium">Cash Flow if Successful</th>
                 <th className="px-3 py-2 font-medium">Cumulative Prob.</th>
                 <th className="px-3 py-2 font-medium">Prob-Adjusted</th>
                 <th className="px-3 py-2 font-medium">PV</th>
               </tr>
             </thead>
             <tbody>
-              {computed.yearlyCashFlows.map((row) => (
-                <tr key={row.year} className="border-b border-border last:border-0">
+              {computed.yearlyCashFlows.map((row, i) => (
+                <tr key={i} className="border-b border-border last:border-0">
                   <td className="px-3 py-2">{row.year}</td>
                   <td className="px-3 py-2">{row.stage}</td>
                   <td className="px-3 py-2">{formatUsd(row.grossCashFlowUsd)}</td>
