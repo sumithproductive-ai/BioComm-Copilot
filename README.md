@@ -6,6 +6,10 @@ Stack: Next.js (App Router) + TypeScript + Postgres via Prisma. Full-stack TypeS
 
 **Build status:** live and deployed. All 8 agents are built and wired end-to-end: Clinical Research, Competitive Intelligence, Commercial Opportunity, Regulatory, Deal Comparables, Patent Landscape *(informational only, live verification pending EPO credentials)*, Critic, and Synthesis. Since Demo Day: citation source-provenance checking (every citation is checked against a real tool/search result, not just schema-validated), SEC EDGAR as a real structured tool for Deal Comparables/Competitive Intelligence, an opt-in Deep Research Mode (Critic-flagged agents get a real second pass before Synthesis), and a batch queue (`/batch`) for submitting multiple assessments at once. Next up: security hardening, then Google OAuth (`next-auth`, whole-app gate, small allowlist).
 
+## Tests and accuracy benchmark
+
+`npm test` runs the deterministic rules for free. See `evals/README.md` for the benchmark. No accuracy figure has been established yet.
+
 ## Local development
 
 Install a local Postgres (Homebrew):

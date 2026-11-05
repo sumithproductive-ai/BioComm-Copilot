@@ -1,0 +1,10 @@
+{
+  "note": "Starter set only. A credible benchmark needs about 30 assets (10 UC, 15 other indications, 5 traps) and expert answer keys. approvedCompetitors is null where no one has checked a key; null is reported as NOT MEASURED. UC assets are scored against lib/config/uc-competitors.ts.",
+  "assets": [
+    { "id": "uc-il23-canary", "category": "uc", "input": { "target": "IL-23 / p19 subunit", "modality": "Monoclonal antibody", "stage": "Phase 2", "indication": "Ulcerative colitis" } },
+    { "id": "uc-tl1a", "category": "uc", "input": { "target": "TL1A", "modality": "Monoclonal antibody", "stage": "Phase 3", "indication": "Ulcerative colitis" } },
+    { "id": "other-kras-g12c", "category": "other", "approvedCompetitors": null, "input": { "target": "KRAS G12C", "modality": "Small molecule", "stage": "Phase 3", "indication": "Non-small cell lung cancer" } },
+    { "id": "other-pcsk9-sirna", "category": "other", "approvedCompetitors": null, "input": { "target": "PCSK9", "modality": "siRNA", "stage": "Phase 3", "indication": "Primary hypercholesterolemia" } },
+    { "id": "trap-no-data", "category": "trap", "expect": { "noTrials": true }, "input": { "target": "ZZQ-9471 (deliberately fictional target)", "modality": "Small molecule", "stage": "Preclinical", "indication": "Ulcerative colitis" } }
+  ]
+}
