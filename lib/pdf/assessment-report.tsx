@@ -527,6 +527,20 @@ export function AssessmentReportDocument({
               Overall probability of success: {(rnpv.computed.overallProbabilityOfSuccess * 100).toFixed(1)}% ·
               Terminal value: {formatUsd(rnpv.computed.terminalValueUsd)}
             </Text>
+            {rnpv.computed.inputSourcing && (
+              <Text style={styles.muted}>
+                {rnpv.computed.inputSourcing.sourced} of {rnpv.computed.inputSourcing.total} inputs cite a source. Citations were seen during research but not checked against each number, so review them before relying on this valuation.
+                {rnpv.computed.inputSourcing.unsourcedInputs.length > 0
+                  ? ` Unsourced: ${rnpv.computed.inputSourcing.unsourcedInputs.join("; ")}.`
+                  : ""}
+              </Text>
+            )}
+            {rnpv.assumptions.populationReconciliation && (
+              <Text style={styles.muted}>
+                Population basis: started from {rnpv.assumptions.populationReconciliation.startingPopulationCount.toLocaleString()} patients.{" "}
+                {rnpv.assumptions.populationReconciliation.explanation}
+              </Text>
+            )}
             <Text style={[styles.subheading, { marginTop: 10 }]}>Phase probabilities</Text>
             {rnpv.assumptions.phaseProbabilities.map((p, i) => (
               <View key={i} style={styles.card} wrap={false}>

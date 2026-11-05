@@ -275,6 +275,66 @@ export function validateRnpvAssumptions(assumptions: ModelAssumptions): string[]
   return problems;
 }
 
+// Which valuation inputs have a citation. This proves the page appeared in the
+// run's results, not that it supports the number. A number without one is
+// allowed but shown as unsourced: forcing a link on everything would push the
+// agent toward inventing sources.
+export function computeInputSourcing(assumptions: ModelAssumptions): NonNullable<RnpvComputed["inputSourcing"]> {
+  const { revenueAssumptions: revenue } = assumptions;
+  const inputs: [string, unknown][] = [
+    ...assumptions.phaseProbabilities.map((gate): [string, unknown] => [`Probability: ${gate.fromStage} to ${gate.toStage}`, gate.citation]),
+    ...assumptions.developmentCosts.map((cost): [string, unknown] => [`Cost: ${cost.stage}`, cost.citation]),
+    ...assumptions.timeline.map((stage): [string, unknown] => [`Duration: ${stage.stage}`, stage.citation]),
+    ["Patient population", revenue.treatablePopulationCitation],
+    ["Penetration and pricing", revenue.citation],
+    ["Commercial margins", assumptions.commercialEconomics.citation],
+    ["Discount rate", assumptions.discountRateCitation],
+  ];
+  const unsourcedInputs = inputs.filter(([, citation]) => !citation).map(([name]) => name);
+  return { sourced: inputs.length - unsourcedInputs.length, total: inputs.length, unsourcedInputs };
+}
+
+const SCALES: Record<string, number> = { million: 1e6, m: 1e6, thousand: 1e3, k: 1e3 };
+
+// Patient counts written in free text. Percentages and years are ignored.
+export function parsePatientCounts(text: string): number[] {
+  const counts: number[] = [];
+  for (const match of text.matchAll(/(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(million|thousand|m\b|k\b)?(\s*%)?/gi)) {
+    if (match[3]) continue;
+    const value = Number(match[1].replace(/,/g, "")) * (match[2] ? SCALES[match[2].toLowerCase()] : 1);
+    const looksLikeYear = !match[2] && !match[1].includes(",") && value >= 1900 && value <= 2100;
+    if (value >= 1000 && !looksLikeYear) counts.push(value);
+  }
+  return counts;
+}
+
+// Flags a model that starts from a different population than the Commercial
+// Opportunity agent found. Any figure quoted there counts as a match, so this
+// only fires when the starting number matches none of them.
+export function checkPopulationConsistency(
+  assumptions: ModelAssumptions,
+  commercialEstimate: string | undefined
+): PlausibilityWarning[] {
+  const { startingPopulationCount: start } = assumptions.populationReconciliation;
+  const warnings: PlausibilityWarning[] = [];
+  if (assumptions.revenueAssumptions.treatablePopulationCount > start) {
+    warnings.push({
+      field: "treatablePopulationCount",
+      severity: "Flag",
+      message: `The treatable population (${assumptions.revenueAssumptions.treatablePopulationCount.toLocaleString()}) is larger than the population it was narrowed from (${start.toLocaleString()}).`,
+    });
+  }
+  const counts = commercialEstimate ? parsePatientCounts(commercialEstimate) : [];
+  if (counts.length > 0 && !counts.some((count) => Math.abs(start - count) / count <= 0.1)) {
+    warnings.push({
+      field: "populationReconciliation",
+      severity: "Flag",
+      message: `This valuation starts from ${start.toLocaleString()} patients, but the Commercial Opportunity estimate was "${commercialEstimate}". Stated reason: ${assumptions.populationReconciliation.explanation}`,
+    });
+  }
+  return warnings;
+}
+
 const UNAPPROVED_STAGES = ["Preclinical", "Phase 1", "Phase 2", "Phase 3"];
 
 function checkPlausibility(
@@ -299,6 +359,20 @@ function checkPlausibility(
       field: "peakPenetrationRateHigh",
       severity: "Flag",
       message: `Peak penetration high end of ${(revenue.peakPenetrationRateHigh * 100).toFixed(1)}% is well above the ~1-5% typical for a first-in-class asset. Treat it as an outlier case, not the base case.`,
+    });
+  } else if (revenue.peakPenetrationRateHigh > 0.05) {
+    warnings.push({
+      field: "peakPenetrationRateHigh",
+      severity: "Note",
+      message: `Peak penetration high end of ${(revenue.peakPenetrationRateHigh * 100).toFixed(1)}% is above the ~1-5% typical for a new entrant. Check that it's justified, especially in a crowded market.`,
+    });
+  }
+  const sourcing = computeInputSourcing(assumptions);
+  if (sourcing.sourced / sourcing.total < 0.5) {
+    warnings.push({
+      field: "inputSourcing",
+      severity: "Flag",
+      message: `Only ${sourcing.sourced} of ${sourcing.total} valuation inputs cite a source, so most of this valuation rests on unsourced estimates.`,
     });
   }
   if (discountRatePercent > 20) {
@@ -393,6 +467,7 @@ export function computeRnpv(
     commercialYearsBeforeLossOfExclusivity: base.commercialYears,
     peakNetRevenueUsd: Math.round(base.peakNetRevenueUsd),
     peakPatientsTreated: Math.round(base.peakPatients),
+    inputSourcing: computeInputSourcing(assumptions),
     yearlyCashFlows: base.yearlyCashFlows,
     terminalValueUsd: base.terminalValueUsd,
     totalRnpvUsd: base.totalRnpvUsd,

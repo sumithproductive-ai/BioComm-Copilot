@@ -375,6 +375,13 @@ export const commercialEconomicsSchema = z.object({
 
 export const treatmentModelSchema = z.enum(["chronic", "oneTime"]);
 
+// How the modeled population connects to the Commercial Opportunity estimate,
+// so an unexplained change of starting figure can be caught in code.
+export const populationReconciliationSchema = z.object({
+  startingPopulationCount: z.number().positive(),
+  explanation: z.string(),
+});
+
 export const financialAssumptionsSchema = z.object({
   phaseProbabilities: z.array(phaseProbabilitySchema).min(1),
   developmentCosts: z.array(developmentCostEstimateSchema).min(1),
@@ -382,6 +389,7 @@ export const financialAssumptionsSchema = z.object({
   timeline: z.array(timelineStageSchema).min(1),
   discountRatePercent: z.number().min(0).max(100),
   discountRateRationale: z.string(),
+  discountRateCitation: citationRefSchema.optional(),
   exclusivityYears: z.number().positive(),
   exclusivityYearsRationale: z.string().optional(),
   // Optional here so memos saved before model version 2 still parse.
@@ -393,12 +401,14 @@ export const financialAssumptionsSchema = z.object({
   // Calendar year protection ends. Takes priority over exclusivityYears, so
   // that development time uses up the patent term.
   lossOfExclusivityYear: z.number().int().optional(),
+  populationReconciliation: populationReconciliationSchema.optional(),
 });
 export type FinancialAssumptions = z.infer<typeof financialAssumptionsSchema>;
 
 export const modelAssumptionsSchema = financialAssumptionsSchema.extend({
   commercialEconomics: commercialEconomicsSchema,
   treatmentModel: treatmentModelSchema,
+  populationReconciliation: populationReconciliationSchema,
 });
 export type ModelAssumptions = z.infer<typeof modelAssumptionsSchema>;
 
@@ -456,6 +466,9 @@ export const rnpvComputedSchema = z.object({
   commercialYearsBeforeLossOfExclusivity: z.number().optional(),
   peakNetRevenueUsd: z.number().optional(),
   peakPatientsTreated: z.number().optional(),
+  inputSourcing: z
+    .object({ sourced: z.number().int(), total: z.number().int(), unsourcedInputs: z.array(z.string()) })
+    .optional(),
   yearlyCashFlows: z.array(yearlyCashFlowSchema),
   terminalValueUsd: z.number(),
   totalRnpvUsd: z.number(),

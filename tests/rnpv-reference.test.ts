@@ -3,7 +3,14 @@
 // the new number in.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyFinancialAssumptionsOverride, computeRnpv, validateRnpvAssumptions } from "../lib/agents/rnpv-calc";
+import {
+  applyFinancialAssumptionsOverride,
+  checkPopulationConsistency,
+  computeInputSourcing,
+  computeRnpv,
+  parsePatientCounts,
+  validateRnpvAssumptions,
+} from "../lib/agents/rnpv-calc";
 import { modelAssumptionsSchema, rnpvOutputSchema, type ModelAssumptions } from "../lib/agents/schemas";
 
 const VALUATION = new Date("2026-06-30T00:00:00Z");
@@ -30,6 +37,7 @@ const caseA = (over: Partial<ModelAssumptions> = {}): ModelAssumptions => ({
   discountRateRationale: "test",
   exclusivityYears: 1,
   treatmentModel: "chronic",
+  populationReconciliation: { startingPopulationCount: 1000, explanation: "test" },
   commercialEconomics: economics(),
   ...over,
 });
@@ -44,6 +52,7 @@ const caseC = (over: Partial<ModelAssumptions> = {}): ModelAssumptions => ({
   exclusivityYears: 99, // must be ignored, because lossOfExclusivityYear is set
   lossOfExclusivityYear: 2041,
   treatmentModel: "chronic",
+  populationReconciliation: { startingPopulationCount: 1_000_000, explanation: "test" },
   commercialEconomics: economics(25, 15, 30, 5, 21),
   ...over,
 });
@@ -78,6 +87,7 @@ test("D: one-time therapy uses up its existing patient pool", () => {
     discountRateRationale: "test",
     exclusivityYears: 5,
     treatmentModel: "oneTime",
+    populationReconciliation: { startingPopulationCount: 100_000, explanation: "test" },
     annualNewPatients: 5000,
     commercialEconomics: economics(10, 20, 25, 0, 20),
   };
@@ -167,13 +177,69 @@ test("discount warnings point at double counting, not a required 15-25% range", 
   assert.equal(warnings(3)[0].severity, "Note");
 });
 
+test("coverage counts each input and names the unsourced ones", () => {
+  const citation = { sourceType: "Other" as const, sourceUrl: "https://a.com/x", accessedDate: "2026-11-01" };
+  const uncited = computeInputSourcing(caseC());
+  assert.deepEqual([uncited.sourced, uncited.total], [0, 13]);
+  assert.ok(uncited.unsourcedInputs.includes("Discount rate"));
+  assert.ok(uncited.unsourcedInputs.includes("Probability: Phase 2 to Phase 3"));
+  const cited = computeInputSourcing(caseC({ discountRateCitation: citation }));
+  assert.equal(cited.sourced, 1);
+  assert.ok(!cited.unsourcedInputs.includes("Discount rate"));
+});
+
+test("mostly unsourced valuations are flagged, and well-sourced ones are not", () => {
+  const citation = { sourceType: "Other" as const, sourceUrl: "https://a.com/x", accessedDate: "2026-11-01" };
+  const has = (a: ModelAssumptions) => computeRnpv(a, "Phase 2", VALUATION).plausibilityWarnings.some((w) => w.field === "inputSourcing");
+  assert.equal(has(caseC()), true);
+  const base = caseC();
+  const sourced = caseC({
+    phaseProbabilities: base.phaseProbabilities.map((g) => ({ ...g, citation })),
+    developmentCosts: base.developmentCosts.map((c) => ({ ...c, citation })),
+    timeline: base.timeline.map((t) => ({ ...t, citation })),
+  });
+  assert.equal(has(sourced), false);
+});
+
+test("reads patient counts from free text, ignoring years and percentages", () => {
+  assert.deepEqual(parsePatientCounts("roughly 1 million US patients in 2024, about 30% severe"), [1_000_000]);
+  assert.deepEqual(parsePatientCounts("700,000 to 1.2M adults"), [700_000, 1_200_000]);
+  assert.deepEqual(parsePatientCounts("150 thousand"), [150_000]);
+  assert.deepEqual(parsePatientCounts("no figure available"), []);
+});
+
+test("population check flags an unexplained change of starting figure", () => {
+  const flagged = (start: number, estimate?: string) =>
+    checkPopulationConsistency(caseC({ populationReconciliation: { startingPopulationCount: start, explanation: "reason" } }), estimate)
+      .filter((w) => w.field === "populationReconciliation");
+  assert.equal(flagged(1_500_000, "roughly 1 million US patients").length, 1);
+  assert.ok(flagged(1_500_000, "roughly 1 million US patients")[0].message.includes("reason"));
+  assert.equal(flagged(1_050_000, "roughly 1 million US patients").length, 0);
+  assert.equal(flagged(1_500_000, "figure not available").length, 0);
+  assert.equal(flagged(1_500_000, undefined).length, 0);
+});
+
+test("a treatable population larger than its starting point is flagged", () => {
+  const warnings = checkPopulationConsistency(caseC({ populationReconciliation: { startingPopulationCount: 1000, explanation: "x" } }), undefined);
+  assert.ok(warnings.some((w) => w.field === "treatablePopulationCount" && w.severity === "Flag"));
+});
+
+test("penetration above 5% gets a note, and above 10% a flag", () => {
+  const severity = (high: number) =>
+    computeRnpv(caseC({ revenueAssumptions: revenue(200_000, 0.02, high, 40_000, 60_000, 4) }), "Phase 2", VALUATION)
+      .plausibilityWarnings.find((w) => w.field === "peakPenetrationRateHigh")?.severity;
+  assert.equal(severity(0.05), undefined);
+  assert.equal(severity(0.1), "Note");
+  assert.equal(severity(0.11), "Flag");
+});
+
 test("new submissions must include economics and a treatment model", () => {
   const { commercialEconomics: _economics, treatmentModel: _treatment, ...old } = caseC();
   assert.equal(modelAssumptionsSchema.safeParse(old).success, false);
 });
 
 test("memos saved under the earlier model still open", () => {
-  const { commercialEconomics: _economics, treatmentModel: _treatment, lossOfExclusivityYear: _loe, ...old } = caseC();
+  const { commercialEconomics: _economics, treatmentModel: _treatment, lossOfExclusivityYear: _loe, populationReconciliation: _population, ...old } = caseC();
   const parsed = rnpvOutputSchema.safeParse({
     assumptions: old,
     computed: {

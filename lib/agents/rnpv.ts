@@ -23,7 +23,13 @@ import {
   type DealComparablesOutput,
   type PatentOutput,
 } from "./schemas";
-import { computeRnpv, applyFinancialAssumptionsOverride, validateRnpvAssumptions } from "./rnpv-calc";
+import {
+  applyFinancialAssumptionsOverride,
+  checkPopulationConsistency,
+  computeInputSourcing,
+  computeRnpv,
+  validateRnpvAssumptions,
+} from "./rnpv-calc";
 import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
 import { SourceLedger } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
@@ -55,12 +61,14 @@ What you must submit (all under "assumptions"). EVERY entry listed below needs i
 5. discountRatePercent — this must reflect time value and cost of capital. rNPV already applies clinical and regulatory risk through phaseProbabilities, so never raise the rate for that risk: it would be counted twice. Explain the cost-of-capital basis in discountRateRationale, with a source where you have one.
 6. lossOfExclusivityYear and exclusivityYears — when you can determine when protection ends from patent filing dates or regulatory exclusivity, set lossOfExclusivityYear to that calendar year. The calculator uses it first, so development time correctly uses up the patent term. exclusivityYears is always required: your estimate of protected years after launch, used only when lossOfExclusivityYear is omitted. Justify both in exclusivityYearsRationale.
 7. commercialEconomics — grossToNetPercent (rebates and discounts off list price), cogsPercentOfNetRevenue, sgaPercentOfNetRevenue, royaltyPercentOfNetRevenue (existing third-party royalties only, not hypothetical deal terms), and taxRatePercent, with one rationale and a citation where you have a real source. pricePerPatientUsdLow/High must be LIST price, because the calculator applies grossToNetPercent.
-8. treatmentModel — "chronic" for repeat treatment, where pricePerPatientUsd is the ANNUAL list price and treatablePopulationCount is the patient population; "oneTime" for a single treatment, where pricePerPatientUsd is the price per treatment and treatablePopulationCount is the existing eligible pool. For "oneTime", also set annualNewPatients, because the existing pool gets used up.
+8. populationReconciliation — startingPopulationCount is the population you began narrowing from, and explanation shows how you got from it to treatablePopulationCount. Start from the Commercial Opportunity estimate. If you use a different starting figure, say why in explanation; the memo will flag the difference.
+9. treatmentModel — "chronic" for repeat treatment, where pricePerPatientUsd is the ANNUAL list price and treatablePopulationCount is the patient population; "oneTime" for a single treatment, where pricePerPatientUsd is the price per treatment and treatablePopulationCount is the existing eligible pool. For "oneTime", also set annualNewPatients, because the existing pool gets used up.
 
 benchmarkingNotes should explicitly reference the Deal Comparables Agent's findings — what a comparable deal's structure and economics imply about how the market would value this asset, or an honest statement that no clean comparable exists (do not fabricate one).
 
 Hard rules:
 - Never invent a source. Every citation must come from a real search_pubmed or web_search result this conversation, or be omitted.
+- Attach a citation to every phase probability, cost, timeline stage, population, penetration and pricing assumption, commercial margin, and the discount rate (discountRateCitation) that came from something you found. Whenever a rationale relies on a study or data source, the matching citation must link to it; naming a source without linking it is not enough. If you found no source for a number, omit its citation and say so in its rationale. The memo marks every uncited input as unsourced.
 - Never claim more certainty than the underlying data supports — a preclinical asset with no human dosing has NOT demonstrated efficacy; non-human primate delivery-feasibility data is not clinical efficacy data; label accordingly.
 - Do not compute or submit a final valuation, cash-flow table, or sensitivity table yourself — that is done deterministically after you submit. You only submit assumptions and benchmarkingNotes.
 - submit_findings requires every field present, including citation: undefined (omitted) rather than a fabricated one where you have no real source.
@@ -196,6 +204,7 @@ function mockFinancialAssumptions(): ModelAssumptions {
     exclusivityYears: 10,
     exclusivityYearsRationale: "[MOCK] placeholder.",
     treatmentModel: "chronic",
+    populationReconciliation: { startingPopulationCount: 500_000, explanation: "[MOCK] placeholder." },
     commercialEconomics: {
       grossToNetPercent: 30,
       cogsPercentOfNetRevenue: 15,
@@ -215,6 +224,9 @@ export async function runRnpvAgent(
   if (isMockAgentsEnabled()) {
     const assumptions = mockFinancialAssumptions();
     const computed = computeRnpv(assumptions, input.stage);
+    computed.plausibilityWarnings.push(
+      ...checkPopulationConsistency(assumptions, input.commercial?.patientPopulationEstimate.value)
+    );
     const providedOverride = input.financialAssumptionsOverride ?? null;
     const providedComputed = providedOverride
       ? computeRnpv(applyFinancialAssumptionsOverride(assumptions, providedOverride), input.stage)
@@ -234,6 +246,7 @@ export async function runRnpvAgent(
 
   const today = new Date().toISOString().slice(0, 10);
   const sources = new SourceLedger();
+  let askedForCitations = false;
 
   const messages: Anthropic.MessageParam[] = [
     {
@@ -269,7 +282,8 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
 
     const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 8192,
+      // Hit the 8192 limit in a live run once the new inputs were added.
+      max_tokens: 16000,
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: isLastChance ? [submitFindingsTool] : [pubmedToolDefinition, webSearchTool, submitFindingsTool],
       tool_choice: isLastChance ? { type: "tool", name: "submit_findings" } : { type: "auto" },
@@ -335,6 +349,9 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
           ...(parsed.data.assumptions.commercialEconomics.citation
             ? [parsed.data.assumptions.commercialEconomics.citation.sourceUrl]
             : []),
+          ...(parsed.data.assumptions.discountRateCitation
+            ? [parsed.data.assumptions.discountRateCitation.sourceUrl]
+            : []),
         ];
         const unverified = sources.findUnverified(citationUrls);
         const modelProblems = validateRnpvAssumptions(parsed.data.assumptions);
@@ -348,8 +365,26 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
           messages.push({ role: "user", content: toolResults });
           continue;
         }
+        const { unsourcedInputs } = computeInputSourcing(parsed.data.assumptions);
+        // One chance to add links, then uncited numbers are accepted and shown
+        // as unsourced. Retrying until everything is cited would add cost and
+        // push the agent toward inventing sources.
+        if (unverified.length === 0 && unsourcedInputs.length > 0 && !askedForCitations) {
+          askedForCitations = true;
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: submitBlock.id,
+            content: `submit_findings not accepted yet: these inputs have no citation: ${unsourcedInputs.join("; ")}. Call submit_findings again with the complete findings, attaching the exact result URL for each input you actually found a source for. Do not invent a URL. Inputs with no real source can stay uncited, and the memo will mark them as unsourced.`,
+            is_error: true,
+          });
+          messages.push({ role: "user", content: toolResults });
+          continue;
+        }
         if (unverified.length === 0) {
           const computed = computeRnpv(parsed.data.assumptions, input.stage);
+          computed.plausibilityWarnings.push(
+            ...checkPopulationConsistency(parsed.data.assumptions, input.commercial?.patientPopulationEstimate.value)
+          );
           const providedOverride = input.financialAssumptionsOverride ?? null;
           const providedComputed = providedOverride
             ? computeRnpv(

@@ -151,6 +151,16 @@ export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
           {(computed.overallProbabilityOfSuccess * 100).toFixed(1)}% · Terminal value:{" "}
           {formatUsd(computed.terminalValueUsd)}
         </p>
+        {computed.inputSourcing && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            <span className="font-semibold">
+              {computed.inputSourcing.sourced} of {computed.inputSourcing.total} inputs cite a source.
+            </span>{" "}
+            Citations were seen during research but not checked against each number, so review them before relying on this valuation.
+            {computed.inputSourcing.unsourcedInputs.length > 0 &&
+              ` Unsourced: ${computed.inputSourcing.unsourcedInputs.join("; ")}.`}
+          </p>
+        )}
       </div>
 
       <div>
@@ -207,6 +217,13 @@ export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
           </div>
         </div>
       </div>
+
+      {assumptions.populationReconciliation && (
+        <p className="text-xs text-muted-foreground">
+          Population basis: started from {assumptions.populationReconciliation.startingPopulationCount.toLocaleString()}{" "}
+          patients. {assumptions.populationReconciliation.explanation}
+        </p>
+      )}
 
       {assumptions.commercialEconomics && (
         <div>
@@ -269,7 +286,8 @@ export function FinancialValuationSection({ data }: { data: RnpvOutput }) {
           })}
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          Discount rate: {assumptions.discountRatePercent}% — {assumptions.discountRateRationale} ·
+          Discount rate: {assumptions.discountRatePercent}% — {assumptions.discountRateRationale}{" "}
+          <CitationLink citation={assumptions.discountRateCitation} /> ·
           Protected years after launch: {(computed.commercialYearsBeforeLossOfExclusivity ?? assumptions.exclusivityYears).toFixed(1)}
           {assumptions.exclusivityYearsRationale ? ` — ${assumptions.exclusivityYearsRationale}` : ""}
         </p>
