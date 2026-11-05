@@ -23,18 +23,27 @@ import {
   type DealComparablesOutput,
   type PatentOutput,
 } from "./schemas";
-import { computeRnpv, applyFinancialAssumptionsOverride } from "./rnpv-calc";
+import {
+  applyFinancialAssumptionsOverride,
+  checkPopulationConsistency,
+  computeInputSourcing,
+  computeRnpv,
+  validateRnpvAssumptions,
+} from "./rnpv-calc";
 import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
 import { SourceLedger } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
 import { isMockAgentsEnabled } from "./mock-mode";
-import type { FinancialAssumptions } from "./schemas";
+import type { ModelAssumptions } from "./schemas";
 
 const client = new Anthropic();
 
 const MODEL = "claude-sonnet-5";
 const MAX_ITERATIONS = 10;
+
+const METHODOLOGY_NOTE =
+  "Asset-level risk-adjusted NPV, before any deal terms, computed deterministically from the assumptions above (not LLM-generated arithmetic). Cash flow is net revenue after COGS, SG&A, royalties and tax, weighted by probability of success and discounted from the start of the valuation year. Inflation and working capital are excluded, and revenue after loss of exclusivity follows a fixed 60%/30%/15% decline. It is a first-pass model for review by qualified professionals, not a definitive valuation: every input is an estimate.";
 
 const SYSTEM_PROMPT = `You are the Financial Valuation Agent for BioComm Copilot, a commercialization intelligence system for biotech and therapy assets across any indication.
 
@@ -42,20 +51,24 @@ Your job: draft a risk-adjusted NPV (rNPV) model's underlying assumptions for th
 
 The core principle of rNPV: the question is not "how much is this worth today if everything goes right," it's "what is the expected present economic value today after weighting for scientific, regulatory, clinical, manufacturing, and commercial risk." Every number you submit should reflect that — conservative, industry-benchmarked, and honest about what stage this asset is actually at (e.g. a patent grant is not clinical validation; non-human primate/animal delivery data is not human efficacy data; the absence of an international filing can be a deliberate capital-allocation choice, not automatically a risk).
 
-You are given the Commercial Opportunity, Regulatory, Deal Comparables, and Patent Landscape agents' findings for this same asset below — use them as grounding (patient population, development timeline, comparable deal economics, IP position) rather than re-deriving everything from scratch. Use search_pubmed and web_search to find real industry benchmarks: typical phase-transition probabilities for this modality/indication (e.g. published clinical development success-rate studies), typical development costs by stage, typical discount rates for assets at this stage, and comparable pricing for similar modalities.
+You are given the Commercial Opportunity, Regulatory, Deal Comparables, and Patent Landscape agents' findings for this same asset below — use them as grounding (patient population, development timeline, comparable deal economics, IP position) rather than re-deriving everything from scratch. Use search_pubmed and web_search to find real industry benchmarks: typical phase-transition probabilities for this modality/indication (e.g. published clinical development success-rate studies), typical development costs by stage, discount rates based on cost of capital, typical commercial margins, and comparable pricing for similar modalities.
 
 What you must submit (all under "assumptions"). EVERY entry listed below needs its own "rationale" field — an analyst reviewing this memo must be able to see WHY each number was chosen without re-deriving it themselves. Never leave rationale as a placeholder or restate the number itself; name the actual reasoning (which risk factors apply, which cited benchmark you're anchoring to, why this asset departs from or matches it):
-1. phaseProbabilities — an array of gates from the asset's CURRENT stage through approval, in chronological order (earliest gate first — the calculator relies on this order). Each gate needs a realistic probability [0,1], a rationale naming the risk factors that apply to this asset, and a label (almost never "Fact" — these are benchmark-derived Assumptions or Inferences, not facts about this specific asset's future).
+1. phaseProbabilities — an array of gates from the asset's CURRENT stage through approval, in chronological order. Each gate's "fromStage" MUST exactly match a "stage" string in your timeline array (case-insensitive), because the calculator matches them by name. Each gate needs a realistic probability [0,1], a rationale naming the risk factors that apply to this asset, and a label (almost never "Fact" — these are benchmark-derived Assumptions or Inferences, not facts about this specific asset's future).
 2. developmentCosts — one entry per major development stage, with a low/high USD range and a rationale (what's driving the cost at this stage — trial size, CMC complexity, comparable program costs, etc.). The "stage" string in each entry MUST exactly match a "stage" string in your timeline array (case-insensitive) — the calculator joins these two arrays by that field, not by position.
 3. revenueAssumptions — treatablePopulationCount MUST be a real number (not a prose range) for the specific, narrowly-defined population you're modeling (a narrower, more defensible population beats an inflated total-addressable-market figure — e.g. "moderate-to-severe ulcerative colitis after biologic failure, US" beats "all ulcerative colitis"). pricePerPatientUsdLow/High should reflect realistic payer dynamics for this modality and indication, not just what similar products have charged in a more favorable reimbursement context. Include ONE rationale covering population sizing, penetration, pricing, and ramp timing together as a connected argument, not four disconnected numbers.
 4. timeline — one entry per development stage (same "stage" names as developmentCosts) with a realistic duration in years and a rationale, grounded in the Regulatory Agent's findings where available.
-5. discountRatePercent — early-stage/preclinical biotech typically uses 15-25%; justify your choice in discountRateRationale given this asset's specific stage and risk profile.
-6. exclusivityYears — the commercial window before patent expiration/generic erosion, grounded in the Patent Landscape Agent's findings where available. Justify your choice in exclusivityYearsRationale (patent term, filing date, any extension/exclusivity considerations).
+5. discountRatePercent — this must reflect time value and cost of capital. rNPV already applies clinical and regulatory risk through phaseProbabilities, so never raise the rate for that risk: it would be counted twice. Explain the cost-of-capital basis in discountRateRationale, with a source where you have one.
+6. lossOfExclusivityYear and exclusivityYears — when you can determine when protection ends from patent filing dates or regulatory exclusivity, set lossOfExclusivityYear to that calendar year. The calculator uses it first, so development time correctly uses up the patent term. exclusivityYears is always required: your estimate of protected years after launch, used only when lossOfExclusivityYear is omitted. Justify both in exclusivityYearsRationale.
+7. commercialEconomics — grossToNetPercent (rebates and discounts off list price), cogsPercentOfNetRevenue, sgaPercentOfNetRevenue, royaltyPercentOfNetRevenue (existing third-party royalties only, not hypothetical deal terms), and taxRatePercent, with one rationale and a citation where you have a real source. pricePerPatientUsdLow/High must be LIST price, because the calculator applies grossToNetPercent.
+8. populationReconciliation — startingPopulationCount is the population you began narrowing from, and explanation shows how you got from it to treatablePopulationCount. Start from the Commercial Opportunity estimate. If you use a different starting figure, say why in explanation; the memo will flag the difference.
+9. treatmentModel — "chronic" for repeat treatment, where pricePerPatientUsd is the ANNUAL list price and treatablePopulationCount is the patient population; "oneTime" for a single treatment, where pricePerPatientUsd is the price per treatment and treatablePopulationCount is the existing eligible pool. For "oneTime", also set annualNewPatients, because the existing pool gets used up.
 
 benchmarkingNotes should explicitly reference the Deal Comparables Agent's findings — what a comparable deal's structure and economics imply about how the market would value this asset, or an honest statement that no clean comparable exists (do not fabricate one).
 
 Hard rules:
 - Never invent a source. Every citation must come from a real search_pubmed or web_search result this conversation, or be omitted.
+- Attach a citation to every phase probability, cost, timeline stage, population, penetration and pricing assumption, commercial margin, and the discount rate (discountRateCitation) that came from something you found. Whenever a rationale relies on a study or data source, the matching citation must link to it; naming a source without linking it is not enough. If you found no source for a number, omit its citation and say so in its rationale. The memo marks every uncited input as unsourced.
 - Never claim more certainty than the underlying data supports — a preclinical asset with no human dosing has NOT demonstrated efficacy; non-human primate delivery-feasibility data is not clinical efficacy data; label accordingly.
 - Do not compute or submit a final valuation, cash-flow table, or sensitivity table yourself — that is done deterministically after you submit. You only submit assumptions and benchmarkingNotes.
 - submit_findings requires every field present, including citation: undefined (omitted) rather than a fabricated one where you have no real source.
@@ -136,7 +149,11 @@ function summarizeGroundingContext(input: RnpvInput): string {
 
   if (input.patents) {
     parts.push(
-      `Patent Landscape findings: ${input.patents.patents.length} patent(s) found; ${input.patents.landscapeSummary.summary}`
+      `Patent Landscape findings: ${input.patents.patents.length} patent(s) found; ${input.patents.landscapeSummary.summary}. Patents: ${
+        input.patents.patents
+          .map((patent) => `${patent.patentNumber} (${patent.status}, filed ${patent.filingDate ?? "date unknown"}, ${patent.applicant})`)
+          .join("; ") || "none"
+      }`
     );
   } else {
     parts.push("Patent Landscape findings: unavailable (that agent failed or produced no output).");
@@ -150,7 +167,7 @@ function summarizeGroundingContext(input: RnpvInput): string {
 // same real computeRnpv()/applyFinancialAssumptionsOverride() production
 // code below, so this mock path genuinely exercises the calculator and the
 // override comparison feature, just without the LLM drafting the inputs.
-function mockFinancialAssumptions(): FinancialAssumptions {
+function mockFinancialAssumptions(): ModelAssumptions {
   return {
     phaseProbabilities: [
       { fromStage: "Preclinical", toStage: "Phase 1", probability: 0.1, label: "Assumption", rationale: "[MOCK] placeholder." },
@@ -182,10 +199,21 @@ function mockFinancialAssumptions(): FinancialAssumptions {
       { stage: "Phase 2", durationYears: 2, label: "Assumption", rationale: "[MOCK] placeholder." },
       { stage: "Phase 3", durationYears: 3, label: "Assumption", rationale: "[MOCK] placeholder." },
     ],
-    discountRatePercent: 18,
+    discountRatePercent: 11,
     discountRateRationale: "[MOCK] placeholder discount rate for test mode.",
     exclusivityYears: 10,
     exclusivityYearsRationale: "[MOCK] placeholder.",
+    treatmentModel: "chronic",
+    populationReconciliation: { startingPopulationCount: 500_000, explanation: "[MOCK] placeholder." },
+    commercialEconomics: {
+      grossToNetPercent: 30,
+      cogsPercentOfNetRevenue: 15,
+      sgaPercentOfNetRevenue: 30,
+      royaltyPercentOfNetRevenue: 0,
+      taxRatePercent: 21,
+      rationale: "[MOCK] placeholder.",
+      label: "Assumption",
+    },
   };
 }
 
@@ -196,6 +224,9 @@ export async function runRnpvAgent(
   if (isMockAgentsEnabled()) {
     const assumptions = mockFinancialAssumptions();
     const computed = computeRnpv(assumptions, input.stage);
+    computed.plausibilityWarnings.push(
+      ...checkPopulationConsistency(assumptions, input.commercial?.patientPopulationEstimate.value)
+    );
     const providedOverride = input.financialAssumptionsOverride ?? null;
     const providedComputed = providedOverride
       ? computeRnpv(applyFinancialAssumptionsOverride(assumptions, providedOverride), input.stage)
@@ -207,8 +238,7 @@ export async function runRnpvAgent(
         summary: "[MOCK] Test mode — no real research performed (MOCK_AGENTS_FOR_LOCAL_TEST).",
         label: "Unknown",
       },
-      methodologyNote:
-        "This is a simplified risk-adjusted NPV model built from the assumptions above, computed deterministically (not LLM-generated arithmetic). It is a starting point for diligence, not a definitive valuation — every input is an estimate, several with wide uncertainty at this stage, and standard human review is still required.",
+      methodologyNote: METHODOLOGY_NOTE,
       providedOverride,
       providedComputed,
     });
@@ -216,6 +246,7 @@ export async function runRnpvAgent(
 
   const today = new Date().toISOString().slice(0, 10);
   const sources = new SourceLedger();
+  let askedForCitations = false;
 
   const messages: Anthropic.MessageParam[] = [
     {
@@ -251,7 +282,8 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
 
     const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 8192,
+      // Hit the 8192 limit in a live run once the new inputs were added.
+      max_tokens: 16000,
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: isLastChance ? [submitFindingsTool] : [pubmedToolDefinition, webSearchTool, submitFindingsTool],
       tool_choice: isLastChance ? { type: "tool", name: "submit_findings" } : { type: "auto" },
@@ -314,10 +346,45 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
             ? [parsed.data.assumptions.revenueAssumptions.citation.sourceUrl]
             : []),
           ...parsed.data.assumptions.timeline.flatMap((t) => (t.citation ? [t.citation.sourceUrl] : [])),
+          ...(parsed.data.assumptions.commercialEconomics.citation
+            ? [parsed.data.assumptions.commercialEconomics.citation.sourceUrl]
+            : []),
+          ...(parsed.data.assumptions.discountRateCitation
+            ? [parsed.data.assumptions.discountRateCitation.sourceUrl]
+            : []),
         ];
         const unverified = sources.findUnverified(citationUrls);
+        const modelProblems = validateRnpvAssumptions(parsed.data.assumptions);
+        if (modelProblems.length > 0) {
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: submitBlock.id,
+            content: `submit_findings input failed validation: ${modelProblems.join("; ")}. Correct these and call submit_findings again.`,
+            is_error: true,
+          });
+          messages.push({ role: "user", content: toolResults });
+          continue;
+        }
+        const { unsourcedInputs } = computeInputSourcing(parsed.data.assumptions);
+        // One chance to add links, then uncited numbers are accepted and shown
+        // as unsourced. Retrying until everything is cited would add cost and
+        // push the agent toward inventing sources.
+        if (unverified.length === 0 && unsourcedInputs.length > 0 && !askedForCitations) {
+          askedForCitations = true;
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: submitBlock.id,
+            content: `submit_findings not accepted yet: these inputs have no citation: ${unsourcedInputs.join("; ")}. Call submit_findings again with the complete findings, attaching the exact result URL for each input you actually found a source for. Do not invent a URL. Inputs with no real source can stay uncited, and the memo will mark them as unsourced.`,
+            is_error: true,
+          });
+          messages.push({ role: "user", content: toolResults });
+          continue;
+        }
         if (unverified.length === 0) {
           const computed = computeRnpv(parsed.data.assumptions, input.stage);
+          computed.plausibilityWarnings.push(
+            ...checkPopulationConsistency(parsed.data.assumptions, input.commercial?.patientPopulationEstimate.value)
+          );
           const providedOverride = input.financialAssumptionsOverride ?? null;
           const providedComputed = providedOverride
             ? computeRnpv(
@@ -329,8 +396,7 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
             assumptions: parsed.data.assumptions,
             computed,
             benchmarkingNotes: parsed.data.benchmarkingNotes,
-            methodologyNote:
-              "This is a simplified risk-adjusted NPV model built from the assumptions above, computed deterministically (not LLM-generated arithmetic). It is a starting point for diligence, not a definitive valuation — every input is an estimate, several with wide uncertainty at this stage, and standard human review is still required.",
+            methodologyNote: METHODOLOGY_NOTE,
             providedOverride,
             providedComputed,
           });
