@@ -96,7 +96,7 @@ function SideCard({ side, label }: { side: ComparisonSide; label: string }) {
               </Badge>
             </div>
             <div className="rounded-[9px] border border-border bg-white px-3 py-2">
-              <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Confidence</p>
+              <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Evidence Coverage</p>
               <p className="mt-1 text-lg font-bold text-brand-navy">{summary.confidenceScore.toFixed(1)}/10</p>
             </div>
             <div className="rounded-[9px] border border-border bg-white px-3 py-2">
@@ -159,7 +159,7 @@ export function CompareView({ older, newer }: { older: ComparisonSide; newer: Co
               )}
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-xs text-muted-foreground">Confidence Score</span>
+              <span className="text-xs text-muted-foreground">Evidence Coverage</span>
               <DeltaBadge delta={newer.decisionSummary.confidenceScore - older.decisionSummary.confidenceScore} />
             </div>
             <div className="flex flex-col gap-1">

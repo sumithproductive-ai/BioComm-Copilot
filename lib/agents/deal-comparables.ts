@@ -9,7 +9,7 @@ import { z } from "zod";
 import type { LangfuseSpanClient } from "langfuse";
 import { dealComparablesOutputSchema, type DealComparablesOutput } from "./schemas";
 import { secEdgarSearchToolDefinition, searchSecFilings } from "./tools/sec-edgar";
-import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { SourceLedger } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
 import { isMockAgentsEnabled } from "./mock-mode";
@@ -107,11 +107,9 @@ export async function runDealComparablesAgent(
 
   const today = new Date().toISOString().slice(0, 10);
 
-  // Track every hostname that actually appeared in a real result this run —
-  // seeded with sec.gov whenever search_sec_filings returns results, plus
-  // every real web_search result hostname. A citation whose hostname never
-  // appeared is rejected below.
-  const knownHostnames = new Set<string>();
+  // Citations must match a page seen in a tool or web_search result this run
+  // (see SourceLedger).
+  const sources = new SourceLedger();
 
   const messages: Anthropic.MessageParam[] = [
     {
@@ -166,7 +164,7 @@ Today's date is ${today}. Use search_sec_filings and web_search to gather real d
     });
 
     messages.push({ role: "assistant", content: response.content });
-    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
+    sources.addWebSearchResults(response.content);
 
     const toolUseBlocks = response.content.filter(isToolUseBlock);
     const submitBlock = toolUseBlocks.find((b) => b.name === "submit_findings");
@@ -189,7 +187,7 @@ Today's date is ${today}. Use search_sec_filings and web_search to gather real d
         const result = await searchSecFilings(
           block.input as { query: string; entityName?: string; forms?: string; maxResults?: number }
         );
-        if (result.length > 0) knownHostnames.add("www.sec.gov");
+        sources.addToolResult(result);
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",
@@ -205,7 +203,7 @@ Today's date is ${today}. Use search_sec_filings and web_search to gather real d
       const parsed = dealComparablesOutputSchema.safeParse(backfillEmptyArrayFields(submitBlock.input));
       if (parsed.success) {
         const citationUrls = parsed.data.comparableDeals.map((deal) => deal.citation.sourceUrl);
-        const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
+        const unverified = sources.findUnverified(citationUrls);
         if (unverified.length === 0) return parsed.data;
         toolResults.push({
           type: "tool_result",

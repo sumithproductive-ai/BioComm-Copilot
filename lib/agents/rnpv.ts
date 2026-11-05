@@ -25,7 +25,7 @@ import {
 } from "./schemas";
 import { computeRnpv, applyFinancialAssumptionsOverride } from "./rnpv-calc";
 import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
-import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { SourceLedger } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
 import { isMockAgentsEnabled } from "./mock-mode";
@@ -215,7 +215,7 @@ export async function runRnpvAgent(
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const knownHostnames = new Set<string>();
+  const sources = new SourceLedger();
 
   const messages: Anthropic.MessageParam[] = [
     {
@@ -268,7 +268,7 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
     });
 
     messages.push({ role: "assistant", content: response.content });
-    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
+    sources.addWebSearchResults(response.content);
 
     const toolUseBlocks = response.content.filter(isToolUseBlock);
     const submitBlock = toolUseBlocks.find((b) => b.name === "submit_findings");
@@ -289,7 +289,7 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
       if (block.name === "search_pubmed") {
         const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
         const result = await searchPubmed(block.input as { query: string; maxResults?: number });
-        if (result.length > 0) knownHostnames.add("pubmed.ncbi.nlm.nih.gov");
+        sources.addToolResult(result);
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",
@@ -315,7 +315,7 @@ Today's date is ${today}. Use search_pubmed and web_search to ground your assump
             : []),
           ...parsed.data.assumptions.timeline.flatMap((t) => (t.citation ? [t.citation.sourceUrl] : [])),
         ];
-        const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
+        const unverified = sources.findUnverified(citationUrls);
         if (unverified.length === 0) {
           const computed = computeRnpv(parsed.data.assumptions, input.stage);
           const providedOverride = input.financialAssumptionsOverride ?? null;

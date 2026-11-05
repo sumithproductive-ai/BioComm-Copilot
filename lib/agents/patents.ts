@@ -9,7 +9,7 @@ import { z } from "zod";
 import type { LangfuseSpanClient } from "langfuse";
 import { patentOutputSchema, type PatentOutput } from "./schemas";
 import { epoPatentSearchToolDefinition, searchPatents } from "./tools/epo-patents";
-import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { SourceLedger } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
 import { isMockAgentsEnabled } from "./mock-mode";
@@ -99,11 +99,9 @@ export async function runPatentsAgent(
 
   const today = new Date().toISOString().slice(0, 10);
 
-  // Provenance tracking for patents[].citation — same idea as Clinical
-  // Research's realNctIds, hostname-level since these are arbitrary URLs.
-  // Seeded with espacenet.com whenever search_patents actually returns
-  // results, plus every real web_search result hostname.
-  const knownHostnames = new Set<string>();
+  // Citations must match a page seen in a tool or web_search result this run
+  // (see SourceLedger).
+  const sources = new SourceLedger();
 
   const messages: Anthropic.MessageParam[] = [
     {
@@ -155,7 +153,7 @@ Today's date is ${today}. Use search_patents to gather real data before calling 
     });
 
     messages.push({ role: "assistant", content: response.content });
-    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
+    sources.addWebSearchResults(response.content);
 
     const toolUseBlocks = response.content.filter(isToolUseBlock);
     const submitBlock = toolUseBlocks.find((b) => b.name === "submit_findings");
@@ -178,7 +176,7 @@ Today's date is ${today}. Use search_patents to gather real data before calling 
         const result = await searchPatents(
           block.input as { applicant?: string; keyword?: string; maxResults?: number }
         );
-        if (result.length > 0) knownHostnames.add("worldwide.espacenet.com");
+        sources.addToolResult(result);
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",
@@ -194,7 +192,7 @@ Today's date is ${today}. Use search_patents to gather real data before calling 
       const parsed = patentOutputSchema.safeParse(backfillEmptyArrayFields(submitBlock.input));
       if (parsed.success) {
         const citationUrls = parsed.data.patents.map((p) => p.citation.sourceUrl);
-        const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
+        const unverified = sources.findUnverified(citationUrls);
         if (unverified.length === 0) return parsed.data;
         toolResults.push({
           type: "tool_result",

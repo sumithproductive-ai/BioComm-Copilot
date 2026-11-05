@@ -10,7 +10,7 @@ import {
   type CompetitiveIntelligenceOutput,
 } from "./schemas";
 import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
-import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { SourceLedger } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
 import { isMockAgentsEnabled } from "./mock-mode";
@@ -93,13 +93,11 @@ async function runFindingsLoop(
   parentSpan: LangfuseSpanClient | undefined,
   spanPrefix: string
 ): Promise<CommercialOpportunityOutput> {
-  // Provenance tracking for patientPopulationEstimate/unmetNeed citations —
-  // same idea as Clinical Research's realNctIds, hostname-level since these
-  // are arbitrary URLs. Seeded with pubmed.ncbi.nlm.nih.gov whenever
-  // search_pubmed actually returns results, plus every real web_search
-  // result hostname. The reconciliation step afterward doesn't need this —
-  // it can't introduce new citations (marketCrowdingAssessment has none).
-  const knownHostnames = new Set<string>();
+  // Citations must match a page seen in a tool or web_search result this run
+  // (see SourceLedger).
+  // The reconciliation step afterward can't introduce new citations
+  // (marketCrowdingAssessment has none).
+  const sources = new SourceLedger();
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const isLastChance = i === MAX_ITERATIONS - 1;
@@ -136,7 +134,7 @@ async function runFindingsLoop(
     });
 
     messages.push({ role: "assistant", content: response.content });
-    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
+    sources.addWebSearchResults(response.content);
 
     const toolUseBlocks = response.content.filter(isToolUseBlock);
     const submitBlock = toolUseBlocks.find((b) => b.name === "submit_findings");
@@ -157,7 +155,7 @@ async function runFindingsLoop(
       if (block.name === "search_pubmed") {
         const toolSpan = parentSpan?.span({ name: block.name, input: block.input });
         const result = await searchPubmed(block.input as { query: string; maxResults?: number });
-        if (result.length > 0) knownHostnames.add("pubmed.ncbi.nlm.nih.gov");
+        sources.addToolResult(result);
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",
@@ -180,7 +178,7 @@ async function runFindingsLoop(
             : []),
           ...parsed.data.unmetNeed.citations.map((c) => c.sourceUrl),
         ];
-        const unverified = findUnverifiedUrls(citationUrls, knownHostnames);
+        const unverified = sources.findUnverified(citationUrls);
         if (unverified.length === 0) return parsed.data;
         toolResults.push({
           type: "tool_result",

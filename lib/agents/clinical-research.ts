@@ -8,7 +8,7 @@ import type { LangfuseSpanClient } from "langfuse";
 import { clinicalResearchOutputSchema, type ClinicalResearchOutput } from "./schemas";
 import { clinicalTrialsToolDefinition, searchClinicalTrials } from "./tools/clinicaltrials";
 import { pubmedToolDefinition, searchPubmed } from "./tools/pubmed";
-import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { SourceLedger } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
 import { isMockAgentsEnabled, mockCitation } from "./mock-mode";
@@ -129,13 +129,9 @@ export async function runClinicalResearchAgent(
   const realNctIds = new Set<string>();
 
   // Same provenance idea, generalized to every other citation field this
-  // agent has (mechanismOfAction, safetySignals, similarDrugFailures) — the
-  // NCT check above is stricter (exact ID match) and stays as the check for
-  // trials specifically; this is hostname-level for everything else,
-  // seeded with clinicaltrials.gov/pubmed.ncbi.nlm.nih.gov whenever those
-  // structured tools actually return results, plus every real web_search
-  // result hostname.
-  const knownHostnames = new Set<string>();
+  // agent has (mechanismOfAction, safetySignals, similarDrugFailures): the
+  // exact page must have appeared in a tool or web_search result this run.
+  const sources = new SourceLedger();
 
   const messages: Anthropic.MessageParam[] = [
     {
@@ -205,7 +201,7 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
     });
 
     messages.push({ role: "assistant", content: response.content });
-    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
+    sources.addWebSearchResults(response.content);
 
     const toolUseBlocks = response.content.filter(isToolUseBlock);
     const submitBlock = toolUseBlocks.find((b) => b.name === "submit_findings");
@@ -231,7 +227,7 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
         for (const study of result) {
           if (study.nctId) realNctIds.add(study.nctId);
         }
-        if (result.length > 0) knownHostnames.add("clinicaltrials.gov");
+        sources.addToolResult(result);
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",
@@ -242,7 +238,7 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
         const result = await searchPubmed(
           block.input as { query: string; maxResults?: number }
         );
-        if (result.length > 0) knownHostnames.add("pubmed.ncbi.nlm.nih.gov");
+        sources.addToolResult(result);
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",
@@ -267,7 +263,7 @@ Today's date is ${today}. Use search_clinical_trials and search_pubmed to gather
           ...parsed.data.safetySignals.map((s) => s.citation.sourceUrl),
           ...parsed.data.similarDrugFailures.map((f) => f.citation.sourceUrl),
         ];
-        const unverifiedUrls = findUnverifiedUrls(citationUrls, knownHostnames);
+        const unverifiedUrls = sources.findUnverified(citationUrls);
         if (unverifiedNctIds.length === 0 && unverifiedUrls.length === 0) return parsed.data;
 
         const problems: string[] = [];

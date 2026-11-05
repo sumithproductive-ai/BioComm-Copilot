@@ -15,7 +15,7 @@ import {
   findMissingReferenceCompetitors as findMissingReferenceCompetitorsByName,
   isUcRelatedIndication,
 } from "@/lib/config/uc-competitors";
-import { extractWebSearchHostnames, findUnverifiedUrls } from "./tools/source-provenance";
+import { SourceLedger } from "./tools/source-provenance";
 import { formatReviewerFeedback } from "./reviewer-feedback";
 import { formatSupplementaryDocuments } from "./supplementary-documents";
 import { isMockAgentsEnabled } from "./mock-mode";
@@ -154,12 +154,9 @@ export async function runCompetitiveIntelligenceAgent(
   const today = new Date().toISOString().slice(0, 10);
   const systemPrompt = buildSystemPrompt(input.indication);
 
-  // Provenance tracking for approvedCompetitors/lateStagePipeline citations
-  // — same idea as Clinical Research's realNctIds, hostname-level since
-  // these are arbitrary URLs, not compact exact IDs. Seeded with
-  // clinicaltrials.gov or www.sec.gov whenever that structured tool actually
-  // returns results, plus every real web_search result hostname.
-  const knownHostnames = new Set<string>();
+  // Citations must match a page seen in a tool or web_search result this run
+  // (see SourceLedger).
+  const sources = new SourceLedger();
 
   const messages: Anthropic.MessageParam[] = [
     {
@@ -221,7 +218,7 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
     });
 
     messages.push({ role: "assistant", content: response.content });
-    for (const host of extractWebSearchHostnames(response.content)) knownHostnames.add(host);
+    sources.addWebSearchResults(response.content);
 
     const toolUseBlocks = response.content.filter(isToolUseBlock);
     const submitBlock = toolUseBlocks.find((b) => b.name === "submit_findings");
@@ -244,7 +241,7 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
         const result = await searchClinicalTrials(
           block.input as { query: string; condition?: string; pageSize?: number }
         );
-        if (result.length > 0) knownHostnames.add("clinicaltrials.gov");
+        sources.addToolResult(result);
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",
@@ -257,7 +254,7 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
         const result = await searchSecFilings(
           block.input as { query: string; entityName?: string; forms?: string; maxResults?: number }
         );
-        if (result.length > 0) knownHostnames.add("www.sec.gov");
+        sources.addToolResult(result);
         toolSpan?.end({ output: result });
         toolResults.push({
           type: "tool_result",
@@ -279,7 +276,7 @@ Today's date is ${today}. Use search_clinical_trials, search_sec_filings, and we
           ...parsed.data.approvedCompetitors.map((c) => c.citation.sourceUrl),
           ...parsed.data.lateStagePipeline.map((a) => a.citation.sourceUrl),
         ];
-        const unverifiedUrls = findUnverifiedUrls(citationUrls, knownHostnames);
+        const unverifiedUrls = sources.findUnverified(citationUrls);
         if (missing.length === 0 && unverifiedUrls.length === 0) return parsed.data;
 
         const problems: string[] = [];

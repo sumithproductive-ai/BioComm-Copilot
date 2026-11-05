@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "eval": "node --import tsx --env-file-if-exists=.env evals/run.ts",
+    "eval:score": "node --import tsx evals/score.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",
@@ -45,6 +48,7 @@
     "playwright": "^1.61.1",
     "prisma": "^7.8.0",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

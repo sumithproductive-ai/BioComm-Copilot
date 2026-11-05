@@ -1,3 +1,5 @@
+import { DISCLAIMER_TEXT, NON_UC_SCOPE_TEXT } from "@/lib/memo-notices";
+import { isUcRelatedIndication } from "@/lib/config/uc-competitors";
 import { Document, Page, View, Text, StyleSheet, Svg, Rect, Link } from "@react-pdf/renderer";
 import type {
   ClinicalLandscape,
@@ -173,6 +175,8 @@ export function AssessmentReportDocument({
         <Text style={styles.subtitle}>
           {memoRun.modality} · {memoRun.stage} · {memoRun.indication}
         </Text>
+        <Text style={styles.muted}>{DISCLAIMER_TEXT}</Text>
+        {!isUcRelatedIndication(memoRun.indication) && <Text style={styles.muted}>{NON_UC_SCOPE_TEXT}</Text>}
         <Text style={[styles.muted, { marginTop: 2 }]}>
           Generated {generatedAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
         </Text>
@@ -187,7 +191,7 @@ export function AssessmentReportDocument({
                 <Text style={styles.statValue}>{summary.commercialOpportunity}</Text>
               </View>
               <View style={styles.statTile}>
-                <Text style={styles.statLabel}>Confidence</Text>
+                <Text style={styles.statLabel}>Evidence Coverage</Text>
                 <Text style={styles.statValue}>{Number(summary.confidenceScore).toFixed(1)}/10</Text>
               </View>
               <View style={styles.statTile}>
@@ -202,7 +206,7 @@ export function AssessmentReportDocument({
             <Text style={[styles.body, { marginTop: 8 }]}>
               Recommended next step: {NEXT_STEP_LABELS[summary.recommendedNextStep] ?? summary.recommendedNextStep}
             </Text>
-            <Text style={[styles.subheading, { marginTop: 10 }]}>Confidence score breakdown</Text>
+            <Text style={[styles.subheading, { marginTop: 10 }]}>Evidence Coverage breakdown</Text>
             <BarRow label="Clinical data" value={Number(summary.clinicalDataCompleteness)} max={1} color={COLORS.navy} />
             <BarRow label="Competitive" value={Number(summary.competitiveCoverageCompleteness)} max={1} color={COLORS.navy} />
             <BarRow label="Commercial" value={Number(summary.commercialSourceQuality)} max={1} color={COLORS.navy} />
